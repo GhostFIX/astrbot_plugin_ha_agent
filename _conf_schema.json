@@ -1,0 +1,73 @@
+{
+  "ha_url": {
+    "description": "Home Assistant 地址",
+    "type": "string",
+    "default": "",
+    "hint": "只填到端口即可，例如 http://192.168.1.5:8123 。结尾的 /api 会自动补齐。",
+    "obvious_hint": true
+  },
+  "ha_token": {
+    "description": "Home Assistant 长期访问令牌",
+    "type": "string",
+    "default": "",
+    "secret": true,
+    "hint": "HA 左下角个人资料 → 安全 → 长期访问令牌 → 创建令牌。"
+  },
+  "event_type": {
+    "description": "事件类型",
+    "type": "string",
+    "default": "astrbot_command",
+    "hint": "HA 自动化里监听这个事件名。只允许字母、数字和下划线。"
+  },
+  "verify_ssl": {
+    "description": "校验 HTTPS 证书",
+    "type": "bool",
+    "default": true,
+    "hint": "HA 使用自签名证书时才需要关闭。"
+  },
+  "inbound_enabled": {
+    "description": "启用告警回传监听",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后 AstrBot 不再监听端口，HA 的推送会连接失败。"
+  },
+  "inbound_port": {
+    "description": "告警回传端口",
+    "type": "int",
+    "default": 6199,
+    "hint": "HA 侧 rest_command 里的端口要与此一致。修改后需要重载插件。",
+    "slider": {
+      "min": 1024,
+      "max": 65535,
+      "step": 1
+    }
+  },
+  "inbound_token": {
+    "description": "告警回传令牌",
+    "type": "string",
+    "default": "",
+    "secret": true,
+    "hint": "留空则由插件自动生成并保存到 data/plugin_data/astrbot_plugin_ha_agent/inbound_token.txt 。管理员在私聊发送 /ha 可查看。"
+  },
+  "notify_umo": {
+    "description": "告警推送目标会话",
+    "type": "string",
+    "default": "",
+    "_special": "umo",
+    "hint": "留空表示不接收任何告警，HA 的推送会被拒绝（409）。会话选择器支持直接粘贴 UMO；在目标会话发送 /ha 可查看自己的 UMO。"
+  },
+  "allowed_umos": {
+    "description": "指令白名单",
+    "type": "list",
+    "default": [],
+    "_special": "umo",
+    "hint": "留空表示不限制；填写后只有这些会话可以使用 /ha。"
+  },
+  "blocked_umos": {
+    "description": "指令黑名单",
+    "type": "list",
+    "default": [],
+    "_special": "umo",
+    "hint": "优先级高于白名单；同时在黑白名单中的会话会被拒绝。"
+  }
+}

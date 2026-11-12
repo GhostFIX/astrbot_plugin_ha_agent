@@ -1,0 +1,27 @@
+name: astrbot_plugin_ha_agent
+display_name: HA 指令助手
+short_desc: 把 /ha 后面的文字原样变成 Home Assistant 事件，并把 HA 告警推回聊天。
+desc: |
+  把 AstrBot 当作 Home Assistant 的纯文本输入输出端口，不依赖任何大模型。
+
+  **AstrBot → HA**：在聊天里发送 `/ha 开电脑`，插件把 `开电脑` 三个字原样
+  作为 `command` 字段，通过 HA REST API 打到事件总线
+  （默认事件类型 `astrbot_command`）。在 HA 里写一条
+  `trigger: platform: event, event_type: astrbot_command` 的自动化，用
+  `trigger.event.data.command == '开电脑'` 作为条件即可。重复发送同一条命令
+  每次都会送达，不做去重。
+
+  **HA → AstrBot**：插件内置一个带令牌校验的 HTTP 监听（默认 `/ha/notify`），
+  HA 用 `rest_command` 把告警文字推过来，插件转发到插件配置里指定的会话。
+  告警目标是显式配置项，留空即完全不推送。
+
+  适合"温度超过 30°C 提醒我""指令触发家庭自动化""把 HA 告警转进群里"这类
+  轻量场景，配置项只有 10 个。
+version: 1.0.0
+author: deepseek-flash (GhostFIX)
+repo: https://github.com/GhostFIX/astrbot_plugin_ha_agent
+astrbot_version: ">=4.5.0"
+tags:
+  - home-assistant
+  - iot
+  - automation

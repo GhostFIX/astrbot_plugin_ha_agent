@@ -1,0 +1,27 @@
+"""插件级常量。
+
+只放不可配置的固定值，可配置项全部在 ``_conf_schema.json`` 里。
+"""
+
+from __future__ import annotations
+
+PLUGIN_NAME = "astrbot_plugin_ha_agent"
+PLUGIN_DISPLAY_NAME = "HA 指令助手"
+
+# 默认写入 HA 事件总线的事件类型。
+DEFAULT_EVENT_TYPE = "astrbot_command"
+
+# 告警回传监听的默认端口与路径。
+DEFAULT_INBOUND_PORT = 6199
+INBOUND_PATH = "/ha/notify"
+
+# 单条指令与单条告警的长度上限，防止误发超长文本把聊天刷爆。
+MAX_COMMAND_CHARS = 500
+MAX_NOTIFY_CHARS = 4000
+
+# 网络超时（秒）。ping 用短超时，避免帮助卡片卡住。
+HA_REQUEST_TIMEOUT = 10.0
+HA_PING_TIMEOUT = 3.0
+
+DATA_DIR_NAME = "plugin_data"
+INBOUND_TOKEN_FILE = "inbound_token.txt"
