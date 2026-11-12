@@ -440,3 +440,172 @@ button:disabled {
   text-align: center;
   margin-top: 18px;
 }
+
+/* ---------------------------------------------------------------- Tabs */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 14px;
+}
+
+.tab {
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  padding: 9px 16px;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.tab:hover {
+  color: var(--text);
+  border-color: transparent;
+}
+
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ---------------------------------------------------------------- 日志表格 */
+
+.log-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.field.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.field.inline select {
+  font: inherit;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+}
+
+.table-wrap {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: auto;
+  max-height: calc(100vh - 300px);
+  min-height: 240px;
+}
+
+.log-table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.log-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f1f5f9;
+  color: var(--muted);
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.log-table td {
+  padding: 7px 12px;
+  border-bottom: 1px solid #eef2f7;
+  vertical-align: top;
+}
+
+.log-table tbody tr:hover {
+  background: #f8fafc;
+}
+
+.log-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.col-time {
+  width: 118px;
+  white-space: nowrap;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  color: #475569;
+}
+
+.col-level {
+  width: 94px;
+}
+
+.col-source {
+  width: 160px;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.col-message {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.badge.debug {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.badge.info {
+  background: var(--accent-soft);
+  color: #0e7490;
+}
+
+.badge.warning {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.badge.error,
+.badge.critical {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+tr.warning .col-message {
+  color: #92400e;
+}
+
+tr.error .col-message,
+tr.critical .col-message {
+  color: #b91c1c;
+}
+
+.empty {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 20px 0;
+}

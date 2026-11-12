@@ -1,8 +1,9 @@
-// HA 指令助手 · 设置页
+// HA 指令助手 · 设置页（配置 / 日志 两个 Tab）
 // 与后端通过 Dashboard 的插件 bridge 通信；bridge 不可用时退化为直接请求
 // /api/v1/plugins/extensions/<插件名>/<endpoint>，方便本地调试。
 
 const PLUGIN = "astrbot_plugin_ha_agent";
+const LOG_REFRESH_MS = 3000;
 
 const TEXT_FIELDS = [
   "ha_url",
@@ -23,9 +24,19 @@ const chipOut = document.getElementById("chip-out");
 const chipIn = document.getElementById("chip-in");
 const versionEl = document.getElementById("version");
 
+const logRows = document.getElementById("log-rows");
+const logEmpty = document.getElementById("log-empty");
+const logCount = document.getElementById("log-count");
+const logLevel = document.getElementById("log-level");
+const logStatus = document.getElementById("log-status");
+const logAuto = document.getElementById("log-auto");
+
 let bridge = null;
 let busy = false;
+let currentTab = "config";
 let knownUmos = [];
+let logTimer = null;
+let logLoading = false;
 const multi = { notify_umos: [], allowed_umos: [], blocked_umos: [] };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -95,7 +106,22 @@ async function apiPost(endpoint, body = {}) {
   return unwrap(await res.json());
 }
 
-// ------------------------------------------------------------------ 表单状态
+// ------------------------------------------------------------------ Tab
+
+function switchTab(name) {
+  currentTab = name;
+  for (const button of document.querySelectorAll(".tab")) {
+    const active = button.dataset.tab === name;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  }
+  for (const panel of document.querySelectorAll("[data-panel]")) {
+    panel.hidden = panel.dataset.panel !== name;
+  }
+  if (name === "logs") loadLogs(true);
+}
+
+// ------------------------------------------------------------------ 配置表单
 
 function checked(name) {
   const el = form.querySelector(`input[name="${name}"]:checked`);
@@ -334,6 +360,93 @@ function renderReport(report) {
   });
 }
 
+// ------------------------------------------------------------------ 日志表格
+
+function levelClass(level) {
+  const key = String(level || "").toLowerCase();
+  return ["debug", "info", "warning", "error", "critical"].includes(key)
+    ? key
+    : "info";
+}
+
+function formatTime(value) {
+  const text = String(value || "");
+  // 2026-11-12T14:09:35+08:00 → 11-12 14:09:35
+  return text.length >= 19 ? text.slice(5, 19).replace("T", " ") : text;
+}
+
+function renderLogs(entries) {
+  logRows.textContent = "";
+  for (const entry of entries) {
+    const row = document.createElement("tr");
+    row.className = levelClass(entry.level);
+    row.title = `${entry.time || ""}  ${entry.logger || ""}`;
+
+    const timeCell = document.createElement("td");
+    timeCell.className = "col-time";
+    timeCell.textContent = formatTime(entry.time);
+
+    const levelCell = document.createElement("td");
+    levelCell.className = "col-level";
+    const badge = document.createElement("span");
+    badge.className = `badge ${levelClass(entry.level)}`;
+    badge.textContent = entry.level || "INFO";
+    levelCell.appendChild(badge);
+
+    const sourceCell = document.createElement("td");
+    sourceCell.className = "col-source";
+    sourceCell.textContent = entry.logger || "";
+
+    const messageCell = document.createElement("td");
+    messageCell.className = "col-message";
+    messageCell.textContent = entry.message || "";
+
+    row.append(timeCell, levelCell, sourceCell, messageCell);
+    logRows.appendChild(row);
+  }
+  logEmpty.hidden = entries.length > 0;
+}
+
+async function loadLogs(manual = false) {
+  if (logLoading) return;
+  if (!manual && currentTab !== "logs") return;
+  if (document.visibilityState === "hidden") return;
+  logLoading = true;
+  try {
+    const data = await apiGet("logs", { limit: 300, level: logLevel.value });
+    renderLogs(data.entries || []);
+    logCount.textContent = `${data.count ?? 0} / ${data.capacity ?? 400}`;
+    if (Array.isArray(data.attached)) {
+      logCount.title = `监听日志器：${data.attached.join("、") || "无"}`;
+    }
+    if (manual) logStatus.textContent = "";
+  } catch (error) {
+    logStatus.textContent = `读取日志失败：${error.message}`;
+    logStatus.dataset.kind = "err";
+  } finally {
+    logLoading = false;
+  }
+}
+
+async function clearLogs() {
+  try {
+    await apiPost("logs/clear", {});
+    logStatus.textContent = "已清空";
+    logStatus.dataset.kind = "ok";
+    await loadLogs(true);
+  } catch (error) {
+    logStatus.textContent = `清空失败：${error.message}`;
+    logStatus.dataset.kind = "err";
+  }
+}
+
+function scheduleLogs() {
+  if (logTimer) clearInterval(logTimer);
+  logTimer = null;
+  if (!logAuto.checked) return;
+  logTimer = setInterval(() => loadLogs(false), LOG_REFRESH_MS);
+}
+
 // ------------------------------------------------------------------ 动作
 
 async function loadKnownUmos() {
@@ -395,6 +508,10 @@ async function test() {
   }
 }
 
+for (const tab of document.querySelectorAll(".tab")) {
+  tab.addEventListener("click", () => switchTab(tab.dataset.tab));
+}
+
 form.addEventListener("submit", save);
 document.getElementById("test").addEventListener("click", test);
 for (const radio of document.querySelectorAll(
@@ -403,5 +520,12 @@ for (const radio of document.querySelectorAll(
   radio.addEventListener("change", applyVisibility);
 }
 
+document.getElementById("log-refresh").addEventListener("click", () => loadLogs(true));
+document.getElementById("log-clear").addEventListener("click", clearLogs);
+logLevel.addEventListener("change", () => loadLogs(true));
+logAuto.addEventListener("change", scheduleLogs);
+document.addEventListener("visibilitychange", () => loadLogs(false));
+
 wirePickers();
+scheduleLogs();
 load();
