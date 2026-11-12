@@ -133,6 +133,22 @@ def test_parse_truncates_long_message():
     assert len(parsed[1]) == 4000
 
 
+def test_multiline_json_message_is_preserved():
+    payload = json.dumps({"message": "第一行\n第二行\n\n第四行"}).encode()
+    assert parse_notify_payload(payload) == ("", "第一行\n第二行\n\n第四行")
+
+
+def test_multiline_plain_text_is_preserved():
+    assert parse_notify_payload("A\nB\n\nC".encode()) == ("", "A\nB\n\nC")
+
+
+def test_crlf_is_normalized_to_lf():
+    assert parse_notify_payload(b"A\r\nB\r\n") == ("", "A\nB")
+
+    payload = json.dumps({"message": "A\r\nB\rC", "title": "T\r\nX"}).encode()
+    assert parse_notify_payload(payload) == ("T\nX", "A\nB\nC")
+
+
 # ---------------------------------------------------------------- 连接与发布
 
 

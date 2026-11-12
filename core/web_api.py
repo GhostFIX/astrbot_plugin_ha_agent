@@ -104,6 +104,12 @@ class HaAgentWebAPI:
             ["POST"],
             "清空插件日志缓冲",
         )
+        registrar(
+            f"/{PLUGIN_NAME}/settings/token",
+            self.rotate_token,
+            ["POST"],
+            "生成新的告警回传令牌",
+        )
 
     async def get_settings(self):
         plugin = self.plugin
@@ -114,6 +120,7 @@ class HaAgentWebAPI:
                 "version": PLUGIN_VERSION,
                 "plugin_name": PLUGIN_NAME,
                 "settings": public_snapshot(plugin.config),
+                "token": plugin.token_status(),
                 "state": {
                     "outbound_mode": settings.outbound_transport,
                     "outbound_ready": plugin.transport is not None,
@@ -142,6 +149,7 @@ class HaAgentWebAPI:
                 "success": True,
                 "message": "已保存并热生效",
                 "settings": snapshot,
+                "token": self.plugin.token_status(),
                 "state": {
                     "outbound_ready": self.plugin.transport is not None,
                     "inbound_mode": self.plugin.settings.inbound_transport,
@@ -191,3 +199,18 @@ class HaAgentWebAPI:
     async def clear_logs(self):
         self.plugin.logs.clear()
         return json_response({"success": True, "cleared": True})
+
+    async def rotate_token(self):
+        try:
+            token = await self.plugin.rotate_inbound_token()
+        except Exception:  # noqa: BLE001
+            logger.exception("ha-agent: 生成令牌失败")
+            return error_response("生成令牌失败，请查看 AstrBot 日志", status_code=500)
+
+        return json_response(
+            {
+                "success": True,
+                "token": token,
+                "notice": "令牌只显示这一次，关闭或刷新页面后不再显示。",
+            }
+        )

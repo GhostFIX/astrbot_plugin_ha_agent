@@ -37,6 +37,14 @@ def test_snapshot_masks_secrets_and_reports_presence():
     assert snapshot["inbound_port"] == 6199
 
 
+def test_snapshot_contains_no_inbound_token():
+    snapshot = public_snapshot({**BASE, "inbound_token": "should-not-leak"})
+
+    assert "inbound_token" not in snapshot
+    assert "inbound_token_set" not in snapshot
+    assert "should-not-leak" not in str(snapshot)
+
+
 def test_snapshot_handles_empty_config():
     snapshot = public_snapshot(None)
     assert snapshot["outbound_transport"] == "rest"

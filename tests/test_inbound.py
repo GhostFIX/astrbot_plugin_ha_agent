@@ -152,6 +152,60 @@ def test_partial_delivery_reports_counts():
     assert body["targets"] == 3
 
 
+def test_multiline_message_is_delivered_verbatim():
+    received: list[str] = []
+
+    async def deliver(title: str, message: str):
+        received.append(message)
+        return DeliveryReport(True)
+
+    status, _ = _request(
+        deliver,
+        payload={"message": "第一行\n第二行\n\n第四行"},
+        headers=AUTH,
+    )
+
+    assert status == 200
+    assert received == ["第一行\n第二行\n\n第四行"]
+
+
+def test_crlf_is_normalized_on_http():
+    received: list[str] = []
+
+    async def deliver(title: str, message: str):
+        received.append(message)
+        return DeliveryReport(True)
+
+    _request(deliver, payload={"message": "A\r\nB\rC"}, headers=AUTH)
+
+    assert received == ["A\nB\nC"]
+
+
+def test_set_token_takes_effect_immediately():
+    received: list[str] = []
+
+    async def deliver(title: str, message: str):
+        received.append(message)
+        return DeliveryReport(True)
+
+    async def scenario():
+        async with _running(deliver) as (server, base):
+            server.set_token("rotated-token")
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    base, json={"message": "old"}, headers={"X-Auth-Token": "good-token"}
+                ) as old:
+                    async with session.post(
+                        base,
+                        json={"message": "new"},
+                        headers={"X-Auth-Token": "rotated-token"},
+                    ) as new:
+                        return old.status, new.status
+
+    assert asyncio.run(scenario()) == (401, 200)
+    assert received == ["new"]
+
+
 def test_platform_not_found_returns_502():
     async def deliver(title: str, message: str):
         return DeliveryReport(False, "platform_not_found")

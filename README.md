@@ -35,7 +35,7 @@ HA automation（温度 > 30°C）
 - 命令走 HA **事件/消息**语义，同一条命令重复发送每次都会送达（不受"状态值未变化"影响）
 - 告警目标是显式配置项，**留空即完全不接收告警**
 - 会话白名单/黑名单，与同作者的 Council 插件判定规则一致
-- HTTP 回传端口可自定义、令牌自动生成；MQTT 为纯出站连接，**Docker 不用映射端口**
+- HTTP 回传端口可自定义；令牌在插件页生成、**只显示一次**；MQTT 为纯出站连接，**Docker 不用映射端口**
 - 依赖只有 `aiohttp` + `paho-mqtt`
 
 ## 两个入口
@@ -43,7 +43,7 @@ HA automation（温度 > 30°C）
 | 入口 | 用途 |
 |---|---|
 | 插件详情页 → **HA 指令助手**（同一页两个 Tab） | **配置**：切换 REST/MQTT 后只显示相关字段，告警目标/黑白名单支持下拉多选 + 手填，保存即热生效；**日志**：本插件日志的表格视图 |
-| 插件卡片 → **配置**（AstrBot 原生配置页） | 全部 17 项平铺，备查、应急修改；UMO 字段可用会话选择器点选 |
+| 插件卡片 → **配置**（AstrBot 原生配置页） | 全部 16 项平铺，备查、应急修改；UMO 字段可用会话选择器点选 |
 
 两边读写同一份配置，改哪边都生效。设置页保存后无需重载插件。
 
@@ -105,8 +105,10 @@ git clone https://github.com/GhostFIX/astrbot_plugin_ha_agent
 |---|---|---|
 | `inbound_transport` | `http` | `http` / `mqtt` / `off` |
 | `inbound_port` | `6199` | **容器内**监听端口，可改 |
-| `inbound_token` | 空 | 留空自动生成，存 `data/plugin_data/astrbot_plugin_ha_agent/inbound_token.txt` |
 | `notify_umos` | `[]` | 告警推送目标会话（**可多选**）；留空 = 不接收告警 |
+
+> 回传令牌不再走配置：在插件页「配置 → 告警回传令牌」点「生成新令牌」，
+> 明文只显示一次，之后只显示指纹。
 
 ### MQTT
 
@@ -126,13 +128,13 @@ git clone https://github.com/GhostFIX/astrbot_plugin_ha_agent
 | `allowed_umos` | `[]` | 指令白名单，空 = 不限制 |
 | `blocked_umos` | `[]` | 指令黑名单，优先级高于白名单 |
 
-告警目标怎么填：在目标会话发一条 `/ha`，帮助卡片会显示当前会话 UMO；设置页
-里既可以下拉选（发过 `/ha` 的会话会自动进候选），也可以手动粘贴，支持多选。
+告警目标怎么填：在目标会话发一条 `/ha check`，状态卡片会显示 SID（即 UMO）；
+设置页里既可以下拉选（发过 `/ha` 的会话会自动进候选），也可以手动粘贴，支持多选。
 
 ## 快速开始（REST）
 
 1. 填 `ha_url`、`ha_token`，重载插件
-2. 群里发 `/ha`，看到帮助卡片里 `出站：HA 事件 … ✓ 可达`
+2. 群里发 `/ha check`，状态卡片里 `出站：HA 事件 … ✓ 可达`
 3. HA → **开发者工具 → 事件 → 监听** `astrbot_command`
 4. 群里发 `/ha 开电脑`，页面应立刻出现 payload
 5. 确认字段后写自动化
@@ -159,7 +161,7 @@ rest_command:
 `secrets.yaml`：
 
 ```yaml
-astrbot_ha_token: "把帮助卡片里（或 inbound_token.txt 里）的令牌粘贴到这里"
+astrbot_ha_token: "插件页「配置 → 告警回传令牌 → 生成新令牌」拿到的字符串"
 ```
 
 ### 温度超限告警
@@ -252,8 +254,12 @@ mosquitto_pub -h 192.168.1.5 -t astrbot/ha/command -m '{"command":"开电脑"}'
 |---|---|
 | `/ha 开电脑` | 发送 `command` = `开电脑` |
 | `/ha 开 电脑` | `command` = `开 电脑`，中间空格保留 |
-| `/ha` | 帮助卡片（不发送） |
+| `/ha` | 只回用法（不发送） |
+| `/ha check` | 状态卡片：SID、出站/入站连通性、告警目标（不含令牌） |
 | 同一条命令连发 5 次 | 发 5 次，不去重 |
+
+`/ha`、`/ha check` 都受 `allowed_umos` / `blocked_umos` 约束，名单外一律回
+「❌ 无权限」，不会泄露用法。`check` 是保留字，不能作为命令发给 HA。
 
 回复示例：
 
@@ -287,7 +293,7 @@ payload（REST 事件体 / MQTT 消息体相同）：
 
 ```
 POST http://<astrbot>:6199/ha/notify
-X-Auth-Token: <inbound_token>        # 也接受 Authorization: Bearer ...
+X-Auth-Token: <插件页生成的令牌>        # 也接受 Authorization: Bearer ...
 Content-Type: application/json
 
 {"message": "客厅 31°C", "title": "高温告警"}
@@ -310,6 +316,14 @@ Content-Type: application/json
 [WARN] astrbot_plugin_ha_agent: MQTT 告警未投递（notify_umo_not_configured）：客厅 31°C
 ```
 
+### 多行消息
+
+- 正文内部的换行（包括空行）**原样保留**，首尾空行会被去掉
+- `\r\n` 与裸 `\r` 自动归一化成 `\n`，避免聊天里出现多余回车
+- 在 HA 里拼多行内容时务必用 `tojson`，例如
+  `{"message": {{ my_multiline_var | tojson }}}`；把裸换行直接塞进 JSON 字符串
+  会导致 `invalid_json`
+
 ## 排查
 
 | 现象 | 大概率原因 | 怎么办 |
@@ -320,9 +334,9 @@ Content-Type: application/json
 | `❌ MQTT 未连接 Broker` | Broker 地址/账号/网络不对 | 帮助卡片里 `出站：MQTT … ✗`；用 MQTTX 先连通 |
 | `❌ 未安装 paho-mqtt` | 依赖没装上 | `pip install paho-mqtt` 后重载插件 |
 | `✅ 已发送` 但 HA 没动 | 事件名/主题不同、自动化没启用、条件写错 | 开发者工具→事件监听，或 MQTTX 订阅对应主题对比内容 |
-| HA 报 401 | 两边令牌不一致 | 核对 `inbound_token` 与 `secrets.yaml` |
+| HA 报 401 | 两边令牌不一致 | 页面重新生成令牌后同步更新 `secrets.yaml` |
 | HA 报 409 | 没配告警目标 | 填 `notify_umos` |
-| HA 报 502 | 目标平台掉线或 UMO 写错 | 发 `/ha` 看帮助卡片里的 UMO |
+| HA 报 502 | 目标平台掉线或 UMO 写错 | 发 `/ha check` 看 SID |
 | 接口成功但群里没消息 | 平台不支持主动消息（如 QQ 官方接口） | 换 OneBot / Telegram 等平台 |
 | 插件详情页仍只看到旧版「日志」入口 / 入口重复 | 安装目录里残留 `views/logs`（1.2.x 早期版本） | 删掉该目录后重载插件；版本应为 1.2.2，且 `views/` 下只有 `settings` |
 | 帮助卡片显示端口绑定失败 | 端口被占用 | 改 `inbound_port` 并同步改 HA 侧 URL |

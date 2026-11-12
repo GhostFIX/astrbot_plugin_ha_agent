@@ -17,7 +17,7 @@
           </div>
         </div>
         <div class="top-actions">
-          <span class="chip" id="version">v1.2.3</span>
+          <span class="chip" id="version">v1.2.5</span>
           <span class="chip" id="chip-out">出站：—</span>
           <span class="chip" id="chip-in">入站：—</span>
         </div>
@@ -142,23 +142,32 @@
             </div>
 
             <div class="fields" data-when="inbound:http">
-              <div class="grid2">
-                <label class="field">
-                  <span>监听端口</span>
-                  <input
-                    name="inbound_port"
-                    type="number"
-                    min="1024"
-                    max="65535"
-                    placeholder="6199"
-                  />
-                  <em>容器内端口；Docker 需把宿主端口映射到它</em>
-                </label>
-                <label class="field">
-                  <span>回传令牌</span>
-                  <input name="inbound_token" type="password" placeholder="未设置" />
-                  <em>留空则沿用已生成的令牌</em>
-                </label>
+              <label class="field">
+                <span>监听端口</span>
+                <input
+                  name="inbound_port"
+                  type="number"
+                  min="1024"
+                  max="65535"
+                  placeholder="6199"
+                />
+                <em>容器内端口；Docker 需把宿主端口映射到它</em>
+              </label>
+
+              <div class="token-block">
+                <div class="token-head">
+                  <span class="picker-label">告警回传令牌</span>
+                  <button type="button" id="token-rotate">生成新令牌</button>
+                </div>
+                <p class="token-state" id="token-state">未生成</p>
+                <div class="token-reveal" id="token-reveal" hidden>
+                  <code id="token-value"></code>
+                  <button type="button" id="token-copy">复制</button>
+                </div>
+                <em>
+                  令牌只在后台生成、只显示这一次；请立即填入 HA 的
+                  <code>secrets.yaml</code>。之后页面只显示指纹，聊天里也不会出现。
+                </em>
               </div>
             </div>
 

@@ -87,6 +87,7 @@ def test_endpoints_match_backend_routes():
         "settings",
         "settings/test",
         "settings/umos",
+        "settings/token",
         "logs",
         "logs/clear",
     }
@@ -149,6 +150,21 @@ def test_long_umo_chips_cannot_blow_up_the_grid():
     assert ".chip-text" in css and "text-overflow: ellipsis" in css
     assert '"chip-text"' in JS, "chip 文本需要独立 span 才能生效省略号"
     assert ".grid2 > *" in css, "grid 子项需要 min-width: 0"
+
+
+def test_token_is_managed_in_page_not_in_config_schema():
+    schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+    assert "inbound_token" not in schema, "令牌不该再出现在配置里"
+    assert 'name="inbound_token"' not in HTML, "页面里不该有可编辑的令牌输入框"
+
+    for element in (
+        "token-state",
+        "token-rotate",
+        "token-reveal",
+        "token-copy",
+        "token-value",
+    ):
+        assert f'id="{element}"' in HTML, element
 
 
 def test_every_get_element_by_id_exists():

@@ -17,7 +17,7 @@ from .access import normalize_umo_list
 from .config import normalize_ha_url, normalize_topic_prefix, resolve_notify_targets
 from .constants import DEFAULT_EVENT_TYPE
 
-SECRET_FIELDS = ("ha_token", "mqtt_password", "inbound_token")
+SECRET_FIELDS = ("ha_token", "mqtt_password")
 
 _OUTBOUND_CHOICES = ("rest", "mqtt")
 _INBOUND_CHOICES = ("http", "mqtt", "off")

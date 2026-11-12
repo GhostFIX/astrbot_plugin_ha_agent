@@ -52,13 +52,6 @@
       "step": 1
     }
   },
-  "inbound_token": {
-    "description": "告警回传令牌（HTTP 方式）",
-    "type": "string",
-    "default": "",
-    "secret": true,
-    "hint": "留空则由插件自动生成，并保存到插件数据目录的 inbound_token.txt。管理员在私聊发送 /ha 可查看。"
-  },
   "notify_umos": {
     "description": "告警推送目标会话（可多选）",
     "type": "list",

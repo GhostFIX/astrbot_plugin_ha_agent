@@ -25,6 +25,7 @@ from .constants import (
     MQTT_QOS,
     PLUGIN_NAME,
 )
+from .text import normalize_newlines
 
 NotifyHandler = Callable[[str, str], Awaitable[None]]
 
@@ -49,7 +50,7 @@ def parse_notify_payload(payload: bytes) -> tuple[str, str] | None:
     （整段当作 message，title 为空）。无法解析或内容为空时返回 ``None``。
     """
     try:
-        text = payload.decode("utf-8").strip()
+        text = normalize_newlines(payload.decode("utf-8")).strip()
     except UnicodeDecodeError:
         return None
     if not text:
@@ -61,7 +62,7 @@ def parse_notify_payload(payload: bytes) -> tuple[str, str] | None:
         return "", text[:MAX_NOTIFY_CHARS]
 
     if isinstance(data, str):
-        message = data.strip()
+        message = normalize_newlines(data).strip()
         return ("", message[:MAX_NOTIFY_CHARS]) if message else None
 
     if not isinstance(data, dict):
@@ -71,10 +72,14 @@ def parse_notify_payload(payload: bytes) -> tuple[str, str] | None:
     raw_title = data.get("title")
     if not isinstance(raw_message, (str, int, float)):
         return None
-    message = str(raw_message).strip()
+    message = normalize_newlines(str(raw_message)).strip()
     if not message:
         return None
-    title = str(raw_title).strip() if isinstance(raw_title, (str, int, float)) else ""
+    title = (
+        normalize_newlines(str(raw_title)).strip()
+        if isinstance(raw_title, (str, int, float))
+        else ""
+    )
     return title, message[:MAX_NOTIFY_CHARS]
 
 

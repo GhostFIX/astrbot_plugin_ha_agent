@@ -202,14 +202,35 @@ def test_inner_spaces_are_preserved():
     assert transport.events[0]["command"] == "开 电脑"
 
 
-def test_bare_prefix_shows_help_and_sends_nothing():
+def test_bare_prefix_shows_usage_only():
     plugin, _, transport = _build()
-    results = _run(plugin, FakeEvent("/ha", admin=True))
+    plugin.inbound_token = "abcdefghijklmnop"
+
+    text = _run(plugin, FakeEvent("/ha"))[0][1]
 
     assert transport.events == []
-    assert "用法" in results[0][1]
-    assert "aiocqhttp:GroupMessage:1" in results[0][1]
-    assert "令牌" in results[0][1]
+    assert "用法" in text
+    assert "/ha check" in text
+    # 用法卡片不带会话 ID、不带令牌、不带通道状态
+    assert "会话 ID" not in text
+    assert "令牌" not in text
+    assert "abcdefghijklmnop" not in text
+
+
+def test_bare_prefix_is_permission_gated():
+    plugin, _, transport = _build({"blocked_umos": ["aiocqhttp:GroupMessage:1"]})
+    text = _run(plugin, FakeEvent("/ha"))[0][1]
+
+    assert transport.events == []
+    assert "无权限" in text
+    assert "用法" not in text
+
+
+def test_usage_denied_outside_whitelist():
+    plugin, _, _ = _build({"allowed_umos": ["other:umo:1"]})
+    text = _run(plugin, FakeEvent("/ha"))[0][1]
+
+    assert "无权限" in text
 
 
 def test_stripped_prefix_still_works():
@@ -311,15 +332,28 @@ def test_deliver_reports_missing_platform():
     assert report.error == "platform_not_found"
 
 
-def test_help_hides_token_from_non_admin():
-    plugin, _, _ = _build()
+def test_check_card_shows_status_without_token():
+    plugin, _, transport = _build({"notify_umos": ["aiocqhttp:GroupMessage:9"]})
     plugin.inbound_token = "abcdefghijklmnop"
 
-    non_admin = _run(plugin, FakeEvent("/ha", admin=False))[0][1]
-    admin = _run(plugin, FakeEvent("/ha", admin=True))[0][1]
+    text = _run(plugin, FakeEvent("/ha check"))[0][1]
 
-    assert "abcdefghijklmnop" not in non_admin
-    assert "abcdefghijklmnop" in admin
+    assert transport.events == []
+    assert "会话 ID（SID）" in text
+    assert "aiocqhttp:GroupMessage:1" in text
+    assert "出站：" in text
+    assert "入站：" in text
+    assert "告警目标" in text
+    assert "已生成" in text
+    assert "abcdefghijklmnop" not in text
+
+
+def test_check_is_permission_gated():
+    plugin, _, _ = _build({"blocked_umos": ["aiocqhttp:GroupMessage:1"]})
+    text = _run(plugin, FakeEvent("/ha check"))[0][1]
+
+    assert "无权限" in text
+    assert "会话 ID" not in text
 
 
 def _free_port() -> int:
@@ -445,7 +479,7 @@ def test_help_card_reflects_mqtt_mode(monkeypatch):
     plugin, _, _ = _build(_mqtt_config(inbound_transport="mqtt"))
 
     asyncio.run(plugin.initialize())
-    text = _run(plugin, FakeEvent("/ha", admin=True))[0][1]
+    text = _run(plugin, FakeEvent("/ha check"))[0][1]
 
     assert "出站：MQTT" in text
     assert "astrbot/ha/command" in text
@@ -497,6 +531,30 @@ def test_get_settings_endpoint_returns_masked_snapshot():
     assert body["settings"]["ha_token"] == ""
     assert body["settings"]["ha_token_set"] is True
     assert body["state"]["outbound_mode"] == "rest"
+
+
+def test_get_settings_exposes_only_token_fingerprint():
+    plugin, _, _ = _build()
+    plugin.inbound_token = "abcdefghijklmnop"
+
+    body = asyncio.run(plugin.web_api.get_settings())["body"]
+
+    assert body["token"] == {"set": True, "hint": "abcd…mnop"}
+    assert "abcdefghijklmnop" not in str(body)
+
+
+def test_rotate_token_returns_plaintext_once_and_persists():
+    plugin, _, _ = _build()
+    old = plugin.inbound_token
+
+    body = asyncio.run(plugin.web_api.rotate_token())["body"]
+    token = body["token"]
+
+    assert body["success"] is True
+    assert token and token != old
+    assert plugin.inbound_token == token
+    assert plugin.secret_store.load() == token
+    assert "只显示" in body["notice"]
 
 
 def test_save_settings_endpoint_rejects_bad_value(monkeypatch):

@@ -32,7 +32,7 @@ from .core.inbound import DeliveryReport, InboundServer
 from .core.logs import LogBuffer
 from .core.mqtt import MqttBridge, MqttError, MqttTransport
 from .core.settings import merge_payload, public_snapshot
-from .core.store import SecretStore, UmoHistory
+from .core.store import SecretStore, UmoHistory, generate_token
 from .core.transport import RestTransport, TransportError
 from .core.web_api import HaAgentWebAPI
 
@@ -57,6 +57,8 @@ USAGE_HEAD = (
     "用法：/ha <任意文字>\n"
     "  例：/ha 开电脑\n"
     "  重复发送同一条命令，每次都会送达 HA。\n"
+    "\n"
+    "查看通道状态：/ha check"
 )
 
 
@@ -80,8 +82,16 @@ class HaAgentPlugin(Star):
         self.secret_store = SecretStore(self.data_dir / INBOUND_TOKEN_FILE)
         # 见过的会话，供设置页下拉选择。
         self.umo_history = UmoHistory(self.data_dir / "known_umos.json")
-        # 配置里填了就用配置值，留空则用自动生成的令牌。
-        self.inbound_token = self.settings.inbound_token
+        # 令牌只存在数据目录里；1.x 写在配置里的旧值迁移过来后即视为历史。
+        stored = self.secret_store.load()
+        legacy = self.settings.inbound_token
+        if not stored and legacy:
+            try:
+                self.secret_store.save(legacy)
+            except OSError:
+                logger.warning("%s: 旧令牌迁移失败，本次沿用配置值", PLUGIN_NAME)
+            stored = legacy
+        self.inbound_token = stored or legacy
         if not self.inbound_token:
             self.inbound_token, _ = self.secret_store.ensure_token()
 
@@ -315,10 +325,17 @@ class HaAgentPlugin(Star):
         else:  # pragma: no cover - 正常不会走到
             self.config = merged
 
+        # 令牌不再由配置承载：迁移完成后清掉旧键，避免它继续留在配置文件里。
+        # merged 也要清，否则 save_config(merged) 会把旧键再写回来。
+        merged.pop("inbound_token", None)
+        if "inbound_token" in self.config:
+            try:
+                self.config.pop("inbound_token", None)
+            except Exception:  # noqa: BLE001
+                logger.debug("legacy inbound_token cleanup failed", exc_info=True)
+
         self.settings = Settings.from_config(self.config)
-        if self.settings.inbound_token:
-            self.inbound_token = self.settings.inbound_token
-        elif not self.inbound_token:
+        if not self.inbound_token:
             self.inbound_token, _ = self.secret_store.ensure_token()
 
         # 手填的 UMO 也进候选，下次就不用再抄。
@@ -386,15 +403,23 @@ class HaAgentPlugin(Star):
         umo = str(getattr(event, "unified_msg_origin", "") or "")
         command = self._extract_command(event, _arg)
 
-        if not command:
-            yield event.plain_result(await self._help_text(event, umo))
-            return
-
+        # 权限先于一切：连帮助卡片也不给名单外的会话。
         allowed, reason = access_decision(
             umo, self.settings.allowed_umos, self.settings.blocked_umos
         )
         if not allowed:
             yield event.plain_result(self._deny_text(reason))
+            return
+
+        # 通过权限的会话都记进候选，设置页的下拉里才有它。
+        self.umo_history.remember(umo, self._sender_label(event))
+
+        if not command:
+            yield event.plain_result(USAGE_HEAD)
+            return
+
+        if command.strip().lower() == "check":
+            yield event.plain_result(await self._check_text(umo))
             return
 
         if len(command) > MAX_COMMAND_CHARS:
@@ -415,8 +440,6 @@ class HaAgentPlugin(Star):
             return
 
         # 记下这个会话，设置页的下拉候选里才有它。
-        self.umo_history.remember(umo, self._sender_label(event))
-
         payload = self._build_payload(event, umo, command)
         try:
             await self.transport.send(payload)
@@ -545,14 +568,20 @@ class HaAgentPlugin(Star):
     @staticmethod
     def _deny_text(reason: str) -> str:
         if reason == "blocked":
-            return "本会话已被禁止使用 HA 指令。"
+            return "❌ 无权限：本会话已被禁止使用 HA 指令。"
         if reason == "not_whitelisted":
-            return "本会话不在 HA 指令白名单中。"
-        return "当前会话无法使用 HA 指令。"
+            return "❌ 无权限：本会话不在 HA 指令白名单中。"
+        return "❌ 无权限：当前会话无法使用 HA 指令。"
 
-    async def _help_text(self, event: AstrMessageEvent, umo: str) -> str:
+    async def _check_text(self, umo: str) -> str:
+        """``/ha check``：连通性、SID、告警目标；不含令牌明文。"""
         settings = self.settings
-        lines = [USAGE_HEAD.rstrip("\n"), "", "当前会话 UMO：", f"  {umo or '（未知）'}", ""]
+        lines = [
+            "📮 HA 指令助手 · 状态",
+            "",
+            f"会话 ID（SID）：{umo or '（未知）'}",
+            "",
+        ]
         lines.append(await self._outbound_line())
         lines.append(self._inbound_line())
 
@@ -565,8 +594,30 @@ class HaAgentPlugin(Star):
         else:
             lines.append("告警目标：未配置（HA 推送将被丢弃）")
 
-        lines.append(f"回传令牌：{self._token_hint(event)}")
+        status = self.token_status()
+        lines.append(
+            "回传令牌：" + ("已生成" if status["set"] else "未生成（在插件页生成）")
+        )
         return "\n".join(lines)
+
+    def token_status(self) -> dict[str, Any]:
+        """给 WebUI 展示的令牌状态，只含指纹，不含明文。"""
+        token = self.inbound_token or ""
+        if not token:
+            return {"set": False, "hint": ""}
+        hint = token if len(token) <= 10 else f"{token[:4]}…{token[-4:]}"
+        return {"set": True, "hint": hint}
+
+    async def rotate_inbound_token(self) -> str:
+        """生成新令牌并落盘；明文只返回给调用方一次。"""
+        token = generate_token()
+        self.secret_store.save(token)
+        self.inbound_token = token
+        if self.inbound is not None:
+            # 监听器持有的是构造时的令牌，这里原地换掉，不必重启端口。
+            self.inbound.set_token(token)
+        self.logs.record("INFO", "回传令牌已重新生成（明文仅返回一次）")
+        return token
 
     async def _outbound_line(self) -> str:
         settings = self.settings

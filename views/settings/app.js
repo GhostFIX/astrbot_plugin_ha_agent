@@ -12,7 +12,7 @@ const TEXT_FIELDS = [
   "mqtt_username",
   "mqtt_topic_prefix",
 ];
-const SECRET_FIELDS = ["ha_token", "mqtt_password", "inbound_token"];
+const SECRET_FIELDS = ["ha_token", "mqtt_password"];
 const NUMBER_FIELDS = ["inbound_port", "mqtt_port"];
 const MULTI_FIELDS = ["notify_umos", "allowed_umos", "blocked_umos"];
 
@@ -30,6 +30,10 @@ const logCount = document.getElementById("log-count");
 const logLevel = document.getElementById("log-level");
 const logStatus = document.getElementById("log-status");
 const logAuto = document.getElementById("log-auto");
+
+const tokenState = document.getElementById("token-state");
+const tokenReveal = document.getElementById("token-reveal");
+const tokenValue = document.getElementById("token-value");
 
 let bridge = null;
 let busy = false;
@@ -286,6 +290,7 @@ function fill(settings) {
   renderAllPickers();
 
   if (versionEl && data.version) versionEl.textContent = `v${data.version}`;
+  renderTokenState(data.token);
   applyVisibility();
 }
 
@@ -313,6 +318,45 @@ function collect() {
     payload[name] = value;
   }
   return payload;
+}
+
+// ------------------------------------------------------------------ 回传令牌
+
+function renderTokenState(token) {
+  const info = token || {};
+  tokenState.textContent = info.set ? `已生成 · ${info.hint}` : "未生成";
+}
+
+async function rotateToken() {
+  setStatus("生成中…", "busy");
+  try {
+    const data = await apiPost("settings/token", {});
+    const token = data.token || "";
+    tokenValue.textContent = token;
+    tokenReveal.hidden = false;
+    tokenState.textContent = token
+      ? `已生成 · ${token.slice(0, 4)}…${token.slice(-4)}`
+      : "未生成";
+    setStatus("新令牌已生成，请立即复制", "ok");
+  } catch (error) {
+    setStatus(`生成失败：${error.message}`, "err");
+  }
+}
+
+async function copyToken() {
+  const text = tokenValue.textContent || "";
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus("令牌已复制到剪贴板", "ok");
+  } catch (error) {
+    const range = document.createRange();
+    range.selectNodeContents(tokenValue);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    setStatus("已选中，请按 Ctrl+C 复制", "ok");
+  }
 }
 
 // ------------------------------------------------------------------ 状态展示
@@ -468,7 +512,11 @@ async function load() {
   await loadKnownUmos();
   try {
     const data = await apiGet("settings");
-    fill({ ...(data.settings || {}), version: data.version });
+    fill({
+      ...(data.settings || {}),
+      version: data.version,
+      token: data.token,
+    });
     updateChips(data.state || {});
     showBanner("");
   } catch (error) {
@@ -486,7 +534,7 @@ async function save(event) {
   setStatus("保存中…", "busy");
   try {
     const data = await apiPost("settings", collect());
-    fill(data.settings || {});
+    fill({ ...(data.settings || {}), token: data.token });
     updateChips(data.state || {});
     setStatus(data.message || "已保存并生效", "ok");
     await loadKnownUmos();
@@ -523,6 +571,9 @@ for (const radio of document.querySelectorAll(
 )) {
   radio.addEventListener("change", applyVisibility);
 }
+
+document.getElementById("token-rotate").addEventListener("click", rotateToken);
+document.getElementById("token-copy").addEventListener("click", copyToken);
 
 document.getElementById("log-refresh").addEventListener("click", () => loadLogs(true));
 document.getElementById("log-clear").addEventListener("click", clearLogs);

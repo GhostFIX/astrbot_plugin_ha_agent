@@ -18,6 +18,7 @@ from typing import Awaitable, Callable
 from aiohttp import web
 
 from .constants import INBOUND_PATH, MAX_NOTIFY_CHARS
+from .text import normalize_newlines
 
 
 @dataclass(frozen=True)
@@ -44,7 +45,8 @@ def _coerce_text(value: object) -> str:
     if value is None:
         return ""
     if isinstance(value, str):
-        return value.strip()
+        # 保留正文里的换行，只把 CRLF/CR 归一化成 LF。
+        return normalize_newlines(value).strip()
     if isinstance(value, (int, float)):
         return str(value)
     return ""
@@ -83,6 +85,10 @@ class InboundServer:
     @property
     def running(self) -> bool:
         return self._runner is not None and self._site is not None
+
+    def set_token(self, token: str) -> None:
+        """原地更新校验令牌，避免为换令牌重启端口。"""
+        self._token = str(token or "")
 
     def _authorised(self, request: web.Request) -> bool:
         if not self._token:
