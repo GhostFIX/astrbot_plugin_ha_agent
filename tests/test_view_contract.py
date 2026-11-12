@@ -6,10 +6,11 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
-from core.constants import PLUGIN_NAME, PLUGIN_VERSION
+from core.constants import PLUGIN_NAME, PLUGIN_VERSION, VIEW_NAME
 
 ROOT = Path(__file__).resolve().parents[1]
 HTML = (ROOT / "views" / "settings" / "index.html").read_text(encoding="utf-8")
@@ -147,3 +148,20 @@ def test_every_get_element_by_id_exists():
     assert ids, "脚本里没有 getElementById，检查是否写错"
     missing = ids - html_ids
     assert not missing, f"脚本引用了不存在的元素：{sorted(missing)}"
+
+
+def test_only_one_view_dir_matching_view_name():
+    views_dir = ROOT / "views"
+    dirs = sorted(item.name for item in views_dir.iterdir() if item.is_dir())
+    assert dirs == [VIEW_NAME], f"views 下应当只有 {VIEW_NAME}，实际：{dirs}"
+
+
+def test_view_i18n_gives_a_readable_title():
+    i18n_dir = ROOT / ".astrbot-plugin" / "i18n"
+    files = sorted(i18n_dir.glob("*.json"))
+    assert files, "缺少 i18n 文件，视图入口会显示目录名"
+
+    for path in files:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        title = data.get("views", {}).get(VIEW_NAME, {}).get("title")
+        assert title, f"{path.name} 缺少 views.{VIEW_NAME}.title"

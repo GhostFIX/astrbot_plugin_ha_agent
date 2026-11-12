@@ -1,0 +1,10 @@
+{
+  "metadata": {
+    "display_name": "HA Command Assistant"
+  },
+  "views": {
+    "settings": {
+      "title": "HA Command Assistant"
+    }
+  }
+}

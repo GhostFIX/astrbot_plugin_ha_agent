@@ -324,6 +324,7 @@ Content-Type: application/json
 | HA 报 409 | 没配告警目标 | 填 `notify_umos` |
 | HA 报 502 | 目标平台掉线或 UMO 写错 | 发 `/ha` 看帮助卡片里的 UMO |
 | 接口成功但群里没消息 | 平台不支持主动消息（如 QQ 官方接口） | 换 OneBot / Telegram 等平台 |
+| 插件详情页仍只看到旧版「日志」入口 / 入口重复 | 安装目录里残留 `views/logs`（1.2.x 早期版本） | 删掉该目录后重载插件；版本应为 1.2.2，且 `views/` 下只有 `settings` |
 | 帮助卡片显示端口绑定失败 | 端口被占用 | 改 `inbound_port` 并同步改 HA 侧 URL |
 | Docker 里端口映射了还是连不上 | 只映射了宿主端口，没映射容器端口 | `-p 6199:6199` 两侧都要对；或改用 MQTT |
 

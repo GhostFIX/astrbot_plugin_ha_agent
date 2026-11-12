@@ -26,6 +26,7 @@ from .core.constants import (
     INBOUND_TOKEN_FILE,
     MAX_COMMAND_CHARS,
     PLUGIN_NAME,
+    VIEW_NAME,
 )
 from .core.inbound import DeliveryReport, InboundServer
 from .core.logs import LogBuffer
@@ -109,6 +110,7 @@ class HaAgentPlugin(Star):
     async def initialize(self) -> None:
         """插件加载完成后按配置建立出站通道与入站监听。"""
         self._warn_configuration()
+        self._check_legacy_views()
         await self._apply_runtime()
         self.logs.record(
             "INFO",
@@ -141,6 +143,28 @@ class HaAgentPlugin(Star):
             "INFO",
             f"{PLUGIN_NAME} 日志缓冲已启动（监听：{'、'.join(names) or '无'}）",
         )
+
+    def _check_legacy_views(self, root: Path | None = None) -> list[str]:
+        """1.2.x 早期版本曾把日志做成独立视图；残留目录会让 WebUI 出现重复入口。
+
+        这里只提醒、不自动删文件（插件不该动自己的安装目录），
+        返回多余目录名便于测试。
+        """
+        base = root if root is not None else Path(__file__).resolve().parent / "views"
+        try:
+            names = sorted(item.name for item in base.iterdir() if item.is_dir())
+        except OSError:
+            return []
+
+        stale = [name for name in names if name != VIEW_NAME]
+        if stale:
+            message = (
+                f"检测到多余的插件视图目录 {stale}，WebUI 会出现重复入口；"
+                f"请删除 {base / stale[0]} 后重载插件"
+            )
+            logger.warning("%s: %s", PLUGIN_NAME, message)
+            self.logs.record("WARNING", message)
+        return stale
 
     async def _apply_runtime(self) -> None:
         """按当前配置重建全部通道。改配置后也走这里热生效。"""

@@ -16,6 +16,9 @@ DEFAULT_EVENT_TYPE = "astrbot_command"
 DEFAULT_INBOUND_PORT = 6199
 INBOUND_PATH = "/ha/notify"
 
+# 唯一的插件视图目录名（views/<VIEW_NAME>/index.html）。
+VIEW_NAME = "settings"
+
 # 单条指令与单条告警的长度上限，防止误发超长文本把聊天刷爆。
 MAX_COMMAND_CHARS = 500
 MAX_NOTIFY_CHARS = 4000

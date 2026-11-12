@@ -648,3 +648,23 @@ def test_clear_logs_endpoint_empties_buffer():
 
     assert body["cleared"] is True
     assert plugin.logs.snapshot() == []
+
+
+# ---------------------------------------------------------------- 视图迁移
+
+
+def test_legacy_view_dirs_are_reported(tmp_path):
+    plugin, _, _ = _build()
+    views = tmp_path / "views"
+    (views / "settings").mkdir(parents=True)
+    (views / "logs").mkdir()
+
+    assert plugin._check_legacy_views(views) == ["logs"]
+
+
+def test_clean_view_dirs_are_silent(tmp_path):
+    plugin, _, _ = _build()
+    views = tmp_path / "views"
+    (views / "settings").mkdir(parents=True)
+
+    assert plugin._check_legacy_views(views) == []
