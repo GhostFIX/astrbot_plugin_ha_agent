@@ -26,7 +26,7 @@ desc: |
 
   插件自带可视化设置页：切换 REST/MQTT 后只显示相关配置项，保存即热生效；
   原生配置页保留全部选项备查。
-version: 1.2.5
+version: 1.2.6
 author: deepseek-flash (GhostFIX)
 repo: https://github.com/GhostFIX/astrbot_plugin_ha_agent
 astrbot_version: ">=4.5.0"

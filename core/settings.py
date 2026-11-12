@@ -102,6 +102,7 @@ def public_snapshot(config: Mapping[str, Any] | None) -> dict[str, Any]:
         "ha_url": text("ha_url"),
         "event_type": text("event_type", DEFAULT_EVENT_TYPE) or DEFAULT_EVENT_TYPE,
         "verify_ssl": flag("verify_ssl", True),
+        "reply_on_success": flag("reply_on_success", True),
         "inbound_port": _safe_int(cfg.get("inbound_port"), 6199),
         "notify_umos": list(resolve_notify_targets(cfg)),
         "allowed_umos": list(normalize_umo_list(cfg.get("allowed_umos"))),
@@ -155,6 +156,8 @@ def merge_payload(
         merged["event_type"] = _event_type(payload["event_type"])
     if "verify_ssl" in payload:
         merged["verify_ssl"] = _bool(payload["verify_ssl"], "校验 HTTPS 证书")
+    if "reply_on_success" in payload:
+        merged["reply_on_success"] = _bool(payload["reply_on_success"], "成功提示开关")
 
     if "inbound_port" in payload:
         merged["inbound_port"] = _port(

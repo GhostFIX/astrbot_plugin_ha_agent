@@ -452,9 +452,11 @@ class HaAgentPlugin(Star):
             yield event.plain_result("❌ 发送失败：插件内部错误，请查看 AstrBot 日志。")
             return
 
-        yield event.plain_result(
-            f"✅ 已发送 → {self.transport.label}\n「{command}」"
-        )
+        # 成功提示可关；失败提示永远发。
+        if self.settings.reply_on_success:
+            yield event.plain_result(
+                f"✅ 已发送 → {self.transport.label}\n「{command}」"
+            )
 
     # ------------------------------------------------------------------ 入站
 

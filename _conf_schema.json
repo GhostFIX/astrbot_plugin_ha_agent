@@ -33,6 +33,12 @@
     "default": true,
     "hint": "HA 使用自签名证书时才需要关闭。"
   },
+  "reply_on_success": {
+    "description": "推送成功后回复提示",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后成功时不再回复；发送失败、未配置、无权限等提示仍会照常发出。"
+  },
   "inbound_transport": {
     "description": "告警接收方式",
     "type": "string",

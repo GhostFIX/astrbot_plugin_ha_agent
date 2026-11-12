@@ -94,6 +94,7 @@ class Settings:
     ha_token: str = ""
     event_type: str = DEFAULT_EVENT_TYPE
     verify_ssl: bool = True
+    reply_on_success: bool = True
     inbound_transport: str = "http"
     inbound_port: int = DEFAULT_INBOUND_PORT
     inbound_token: str = ""
@@ -149,6 +150,7 @@ class Settings:
             ha_token=str(cfg.get("ha_token") or "").strip(),
             event_type=_as_event_type(cfg.get("event_type")),
             verify_ssl=_as_bool(cfg.get("verify_ssl"), True),
+            reply_on_success=_as_bool(cfg.get("reply_on_success"), True),
             inbound_transport=_as_choice(
                 cfg.get("inbound_transport"), _INBOUND_CHOICES, "http"
             ),

@@ -102,6 +102,12 @@ def test_bool_strings_are_parsed():
     assert Settings.from_config({"verify_ssl": "true"}).verify_ssl is True
 
 
+def test_reply_on_success_defaults_true_and_can_be_disabled():
+    assert Settings.from_config({}).reply_on_success is True
+    assert Settings.from_config({"reply_on_success": "false"}).reply_on_success is False
+    assert Settings.from_config({"reply_on_success": False}).reply_on_success is False
+
+
 def test_lists_are_normalized_into_tuples():
     settings = Settings.from_config(
         {"allowed_umos": ["a", " a ", "b"], "blocked_umos": "c,d"}

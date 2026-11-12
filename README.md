@@ -43,7 +43,7 @@ HA automation（温度 > 30°C）
 | 入口 | 用途 |
 |---|---|
 | 插件详情页 → **HA 指令助手**（同一页两个 Tab） | **配置**：切换 REST/MQTT 后只显示相关字段，告警目标/黑白名单支持下拉多选 + 手填，保存即热生效；**日志**：本插件日志的表格视图 |
-| 插件卡片 → **配置**（AstrBot 原生配置页） | 全部 16 项平铺，备查、应急修改；UMO 字段可用会话选择器点选 |
+| 插件卡片 → **配置**（AstrBot 原生配置页） | 全部 17 项平铺，备查、应急修改；UMO 字段可用会话选择器点选 |
 
 两边读写同一份配置，改哪边都生效。设置页保存后无需重载插件。
 
@@ -98,6 +98,7 @@ git clone https://github.com/GhostFIX/astrbot_plugin_ha_agent
 | `ha_token` | 空 | HA「长期访问令牌」 |
 | `event_type` | `astrbot_command` | REST 模式下写入 HA 的事件类型 |
 | `verify_ssl` | `true` | 自签名证书才关 |
+| `reply_on_success` | `true` | 推送成功后是否回复提示；关掉后成功不吭声，**失败始终提示** |
 
 ### 入站
 
@@ -260,6 +261,9 @@ mosquitto_pub -h 192.168.1.5 -t astrbot/ha/command -m '{"command":"开电脑"}'
 
 `/ha`、`/ha check` 都受 `allowed_umos` / `blocked_umos` 约束，名单外一律回
 「❌ 无权限」，不会泄露用法。`check` 是保留字，不能作为命令发给 HA。
+
+成功提示可以用 `reply_on_success` 关掉（群安静一些）；但**发送失败、未配置、
+无权限这类提示不受开关影响**，永远会回。
 
 回复示例：
 

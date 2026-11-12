@@ -236,6 +236,10 @@ body {
   color: var(--text);
 }
 
+.check.always {
+  margin-top: 12px;
+}
+
 .check input {
   width: 16px;
   height: 16px;

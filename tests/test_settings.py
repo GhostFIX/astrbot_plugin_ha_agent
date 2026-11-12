@@ -37,6 +37,16 @@ def test_snapshot_masks_secrets_and_reports_presence():
     assert snapshot["inbound_port"] == 6199
 
 
+def test_snapshot_exposes_reply_switch():
+    assert public_snapshot(BASE)["reply_on_success"] is True
+    assert public_snapshot({**BASE, "reply_on_success": False})["reply_on_success"] is (
+        False
+    )
+
+    merged = merge_payload(BASE, {"reply_on_success": False})
+    assert merged["reply_on_success"] is False
+
+
 def test_snapshot_contains_no_inbound_token():
     snapshot = public_snapshot({**BASE, "inbound_token": "should-not-leak"})
 

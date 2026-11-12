@@ -271,6 +271,7 @@ function fill(settings) {
     if (el) el.value = data[name] ?? "";
   }
   form.elements.verify_ssl.checked = Boolean(data.verify_ssl);
+  form.elements.reply_on_success.checked = data.reply_on_success !== false;
   form.elements.mqtt_tls.checked = Boolean(data.mqtt_tls);
 
   for (const name of SECRET_FIELDS) {
@@ -299,6 +300,7 @@ function collect() {
     outbound_transport: checked("outbound_transport"),
     inbound_transport: checked("inbound_transport"),
     verify_ssl: form.elements.verify_ssl.checked,
+    reply_on_success: form.elements.reply_on_success.checked,
     mqtt_tls: form.elements.mqtt_tls.checked,
   };
 

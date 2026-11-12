@@ -233,6 +233,32 @@ def test_usage_denied_outside_whitelist():
     assert "无权限" in text
 
 
+def test_success_reply_can_be_disabled():
+    plugin, _, transport = _build({"reply_on_success": False})
+
+    results = _run(plugin, FakeEvent("/ha 开电脑"))
+
+    assert results == []
+    assert len(transport.events) == 1
+    assert transport.events[0]["command"] == "开电脑"
+
+
+def test_failure_reply_ignores_the_switch():
+    from Github.core.transport import TransportError
+
+    class BrokenTransport(FakeTransport):
+        async def send(self, payload: dict) -> None:
+            raise TransportError("令牌无效或已被撤销（401）", status=401)
+
+    plugin, _, _ = _build({"reply_on_success": False})
+    plugin.transport = BrokenTransport()
+
+    results = _run(plugin, FakeEvent("/ha 开电脑"))
+
+    assert len(results) == 1
+    assert "发送失败" in results[0][1]
+
+
 def test_stripped_prefix_still_works():
     plugin, _, transport = _build()
     _run(plugin, FakeEvent("开电脑"))
