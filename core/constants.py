@@ -7,7 +7,7 @@ from __future__ import annotations
 
 PLUGIN_NAME = "astrbot_plugin_ha_agent"
 PLUGIN_DISPLAY_NAME = "HA 指令助手"
-PLUGIN_VERSION = "1.2.2"
+PLUGIN_VERSION = "1.2.3"
 
 # 默认写入 HA 事件总线的事件类型。
 DEFAULT_EVENT_TYPE = "astrbot_command"

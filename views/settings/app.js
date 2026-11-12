@@ -195,7 +195,11 @@ function renderPicker(field) {
     const chip = document.createElement("span");
     chip.className = "chip-item";
     chip.title = umo;
-    chip.appendChild(document.createTextNode(umo));
+    // 独立一层文本节点，长 UMO 用省略号截断，完整值在 title 里
+    const text = document.createElement("span");
+    text.className = "chip-text";
+    text.textContent = umo;
+    chip.appendChild(text);
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "chip-x";

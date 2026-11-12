@@ -141,6 +141,16 @@ def test_log_panel_is_a_table():
     assert "logRows.appendChild(row)" in JS
 
 
+def test_long_umo_chips_cannot_blow_up_the_grid():
+    """超长 UMO 是无空格长串，必须能在两列里收缩并省略。"""
+    css = (ROOT / "views" / "settings" / "style.css").read_text(encoding="utf-8")
+
+    assert "minmax(0, 1fr)" in css, "grid 列必须用 minmax(0,1fr)，否则 min-content 会撑破布局"
+    assert ".chip-text" in css and "text-overflow: ellipsis" in css
+    assert '"chip-text"' in JS, "chip 文本需要独立 span 才能生效省略号"
+    assert ".grid2 > *" in css, "grid 子项需要 min-width: 0"
+
+
 def test_every_get_element_by_id_exists():
     ids = set(re.findall(r'document\.getElementById\("([^"]+)"\)', JS))
     html_ids = set(re.findall(r'id="([^"]+)"', HTML))
