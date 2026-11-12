@@ -9,7 +9,7 @@ from typing import Any
 import aiohttp
 
 from core.constants import MAX_NOTIFY_CHARS
-from core.inbound import InboundServer
+from core.inbound import DeliveryReport, InboundServer
 
 
 @asynccontextmanager
@@ -54,12 +54,14 @@ def test_valid_token_delivers_message():
 
     async def deliver(title: str, message: str):
         received.append((title, message))
-        return True, None
+        return DeliveryReport(True)
 
     status, body = _request(deliver, payload={"message": "客厅 31 度"}, headers=AUTH)
 
     assert status == 200
-    assert body == {"ok": True, "delivered": True}
+    assert body["ok"] is True
+    assert body["delivered"] is True
+    assert body["targets"] == 0
     assert received == [("", "客厅 31 度")]
 
 
@@ -68,7 +70,7 @@ def test_title_is_forwarded():
 
     async def deliver(title: str, message: str):
         received.append((title, message))
-        return True, None
+        return DeliveryReport(True)
 
     status, _ = _request(
         deliver, payload={"message": "客厅 31 度", "title": "高温"}, headers=AUTH
@@ -80,7 +82,7 @@ def test_title_is_forwarded():
 
 def test_bearer_token_is_accepted():
     async def deliver(title: str, message: str):
-        return True, None
+        return DeliveryReport(True)
 
     status, _ = _request(
         deliver,
@@ -99,7 +101,7 @@ def test_non_ascii_token_does_not_crash():
             self.headers = headers
 
     async def deliver(title: str, message: str):
-        return True, None
+        return DeliveryReport(True)
 
     server = InboundServer(deliver=deliver, token="中文令牌")
     assert server._authorised(_FakeRequest({"X-Auth-Token": "中文令牌"})) is True
@@ -130,7 +132,7 @@ def test_missing_token_is_rejected():
 
 def test_unconfigured_notify_target_returns_409():
     async def deliver(title: str, message: str):
-        return False, "notify_umo_not_configured"
+        return DeliveryReport(False, "notify_umo_not_configured")
 
     status, body = _request(deliver, payload={"message": "hi"}, headers=AUTH)
 
@@ -138,9 +140,21 @@ def test_unconfigured_notify_target_returns_409():
     assert body["error"] == "notify_umo_not_configured"
 
 
+def test_partial_delivery_reports_counts():
+    async def deliver(title: str, message: str):
+        return DeliveryReport(True, None, delivered=2, total=3)
+
+    status, body = _request(deliver, payload={"message": "hi"}, headers=AUTH)
+
+    assert status == 200
+    assert body["ok"] is True
+    assert body["sent"] == 2
+    assert body["targets"] == 3
+
+
 def test_platform_not_found_returns_502():
     async def deliver(title: str, message: str):
-        return False, "platform_not_found"
+        return DeliveryReport(False, "platform_not_found")
 
     status, _ = _request(deliver, payload={"message": "hi"}, headers=AUTH)
 
@@ -186,7 +200,7 @@ def test_overlong_message_is_truncated():
 
     async def deliver(title: str, message: str):
         received.append(message)
-        return True, None
+        return DeliveryReport(True)
 
     status, _ = _request(
         deliver, payload={"message": "x" * (MAX_NOTIFY_CHARS + 50)}, headers=AUTH
@@ -198,7 +212,7 @@ def test_overlong_message_is_truncated():
 
 def test_server_reports_bound_port():
     async def deliver(title: str, message: str):
-        return True, None
+        return DeliveryReport(True)
 
     async def scenario():
         async with _running(deliver) as (server, base):

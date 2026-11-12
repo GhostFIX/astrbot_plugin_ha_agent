@@ -168,6 +168,8 @@ BASE_CONFIG = {
 def _build(config: dict | None = None):
     ctx = sys.modules["astrbot.api.star"].Context()
     plugin = HaAgentPlugin(ctx, {**BASE_CONFIG, **(config or {})})
+    # 测试里不落任何全局日志器的 handler，避免用例之间互相累积。
+    plugin.logs.detach()
     transport = FakeTransport()
     plugin.transport = transport
     return plugin, ctx, transport
@@ -268,13 +270,16 @@ def test_overlong_command_is_rejected():
     assert "太长" in results[0][1]
 
 
-def test_deliver_prefixes_title_and_uses_notify_umo():
-    plugin, ctx, _ = _build({"notify_umo": "aiocqhttp:GroupMessage:9"})
+def test_deliver_prefixes_title_and_uses_notify_targets():
+    plugin, ctx, _ = _build({"notify_umos": ["aiocqhttp:GroupMessage:9"]})
 
     async def scenario():
         return await plugin._deliver("高温", "客厅 31 度")
 
-    assert asyncio.run(scenario()) == (True, None)
+    report = asyncio.run(scenario())
+    assert report.ok is True
+    assert report.delivered == 1
+    assert report.total == 1
     assert ctx.sent == [("aiocqhttp:GroupMessage:9", "【高温】\n客厅 31 度")]
 
 
@@ -284,7 +289,9 @@ def test_deliver_without_target_is_refused():
     async def scenario():
         return await plugin._deliver("", "客厅 31 度")
 
-    assert asyncio.run(scenario()) == (False, "notify_umo_not_configured")
+    report = asyncio.run(scenario())
+    assert report.ok is False
+    assert report.error == "notify_umo_not_configured"
     assert ctx.sent == []
 
 
@@ -293,13 +300,15 @@ def test_deliver_reports_missing_platform():
         async def send_message(self, session, chain):
             return False
 
-    plugin, _, _ = _build({"notify_umo": "bad:umo:1"})
+    plugin, _, _ = _build({"notify_umos": ["bad:umo:1"]})
     plugin.context = NoPlatformContext()
 
     async def scenario():
         return await plugin._deliver("", "hi")
 
-    assert asyncio.run(scenario()) == (False, "platform_not_found")
+    report = asyncio.run(scenario())
+    assert report.ok is False
+    assert report.error == "platform_not_found"
 
 
 def test_help_hides_token_from_non_admin():
@@ -332,7 +341,7 @@ def test_inbound_lifecycle_end_to_end():
         {
             "inbound_transport": "http",
             "inbound_port": port,
-            "notify_umo": "aiocqhttp:GroupMessage:9",
+            "notify_umos": ["aiocqhttp:GroupMessage:9"],
         }
     )
 
@@ -354,7 +363,8 @@ def test_inbound_lifecycle_end_to_end():
     status, body = asyncio.run(scenario())
 
     assert status == 200
-    assert body == {"ok": True, "delivered": True}
+    assert body["ok"] is True
+    assert body["delivered"] is True
     assert ctx.sent == [("aiocqhttp:GroupMessage:9", "【高温】\n客厅 31 度")]
     assert plugin.inbound is None
 
@@ -415,7 +425,7 @@ def test_mqtt_inbound_registers_handler(monkeypatch):
         _mqtt_config(
             outbound_transport="rest",
             inbound_transport="mqtt",
-            notify_umo="aiocqhttp:GroupMessage:9",
+            notify_umos=["aiocqhttp:GroupMessage:9"],
         )
     )
 
@@ -546,3 +556,95 @@ def test_check_channels_reports_both_directions():
     assert report["outbound"]["ok"] is True
     assert report["inbound"]["mode"] == "off"
     assert report["inbound"]["detail"] == "已关闭"
+
+
+# ---------------------------------------------------------------- 多目标投递
+
+
+def test_deliver_multi_target_partial_failure():
+    plugin, _, _ = _build({"notify_umos": ["good:1", "bad:2"]})
+
+    class MixedContext:
+        def __init__(self) -> None:
+            self.sent: list[tuple[str, str]] = []
+
+        async def send_message(self, session, chain):
+            if session == "bad:2":
+                return False
+            self.sent.append((session, chain.text))
+            return True
+
+    ctx = MixedContext()
+    plugin.context = ctx
+    report = asyncio.run(plugin._deliver("", "hi"))
+
+    assert report.ok is True
+    assert report.delivered == 1
+    assert report.total == 2
+    assert ctx.sent == [("good:1", "hi")]
+
+
+def test_deliver_multi_target_all_failed():
+    plugin, _, _ = _build({"notify_umos": ["a:1", "b:2"]})
+
+    class DeadContext:
+        async def send_message(self, session, chain):
+            return False
+
+    plugin.context = DeadContext()
+    report = asyncio.run(plugin._deliver("", "hi"))
+
+    assert report.ok is False
+    assert report.error == "platform_not_found"
+    assert report.delivered == 0
+    assert report.total == 2
+
+
+def test_command_records_umo_history():
+    plugin, _, _ = _build()
+    _run(plugin, FakeEvent("/ha 开电脑"))
+
+    entries = plugin.umo_history.entries()
+    assert entries[0]["umo"] == "aiocqhttp:GroupMessage:1"
+    assert entries[0]["label"] == "测试用户"
+
+
+def test_list_umos_endpoint_includes_configured_targets():
+    plugin, _, _ = _build({"notify_umos": ["aiocqhttp:GroupMessage:9"]})
+    result = asyncio.run(plugin.web_api.list_umos())
+
+    umos = [item["umo"] for item in result["body"]["umos"]]
+    assert "aiocqhttp:GroupMessage:9" in umos
+
+
+# ---------------------------------------------------------------- 日志页
+
+
+def test_logs_routes_registered():
+    plugin, ctx, _ = _build()
+    routes = [entry[0] for entry in ctx.routes]
+
+    assert routes.count("/astrbot_plugin_ha_agent/logs") == 1
+    assert "/astrbot_plugin_ha_agent/logs/clear" in routes
+
+
+def test_get_logs_endpoint_returns_entries():
+    plugin, _, _ = _build()
+    plugin.logs.record("INFO", "hello log")
+
+    body = asyncio.run(plugin.web_api.get_logs())["body"]
+
+    assert body["success"] is True
+    assert any("hello log" in item["message"] for item in body["entries"])
+    assert body["capacity"] >= 50
+    assert "count" in body
+
+
+def test_clear_logs_endpoint_empties_buffer():
+    plugin, _, _ = _build()
+    plugin.logs.record("INFO", "x")
+
+    body = asyncio.run(plugin.web_api.clear_logs())["body"]
+
+    assert body["cleared"] is True
+    assert plugin.logs.snapshot() == []

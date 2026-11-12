@@ -10,10 +10,10 @@ const TEXT_FIELDS = [
   "mqtt_host",
   "mqtt_username",
   "mqtt_topic_prefix",
-  "notify_umo",
 ];
 const SECRET_FIELDS = ["ha_token", "mqtt_password", "inbound_token"];
 const NUMBER_FIELDS = ["inbound_port", "mqtt_port"];
+const MULTI_FIELDS = ["notify_umos", "allowed_umos", "blocked_umos"];
 
 const form = document.getElementById("form");
 const banner = document.getElementById("banner");
@@ -25,6 +25,8 @@ const versionEl = document.getElementById("version");
 
 let bridge = null;
 let busy = false;
+let knownUmos = [];
+const multi = { notify_umos: [], allowed_umos: [], blocked_umos: [] };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -123,23 +125,119 @@ function applyVisibility() {
   }
 }
 
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[ch]);
+}
+
+// ------------------------------------------------------------------ 多选会话
+
+function pickerEl(field) {
+  return document.querySelector(`.picker[data-field="${field}"]`);
+}
+
+function addValue(field, raw) {
+  const value = String(raw || "").trim();
+  if (!value) return;
+  if (!multi[field].includes(value)) multi[field].push(value);
+  renderPicker(field);
+}
+
+function removeValue(field, value) {
+  multi[field] = multi[field].filter((item) => item !== value);
+  renderPicker(field);
+}
+
+function renderPicker(field) {
+  const root = pickerEl(field);
+  if (!root) return;
+
+  const chips = root.querySelector("[data-chips]");
+  chips.innerHTML = "";
+  if (!multi[field].length) {
+    const empty = document.createElement("span");
+    empty.className = "chip-empty";
+    empty.textContent = "未选择";
+    chips.appendChild(empty);
+  }
+  for (const umo of multi[field]) {
+    const chip = document.createElement("span");
+    chip.className = "chip-item";
+    chip.title = umo;
+    chip.appendChild(document.createTextNode(umo));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "chip-x";
+    remove.setAttribute("aria-label", `移除 ${umo}`);
+    remove.textContent = "×";
+    remove.addEventListener("click", () => removeValue(field, umo));
+    chip.appendChild(remove);
+    chips.appendChild(chip);
+  }
+
+  const select = root.querySelector("[data-select]");
+  const selected = new Set(multi[field]);
+  const options = ['<option value="">从已知会话中选择…</option>'];
+  for (const item of knownUmos) {
+    if (selected.has(item.umo)) continue;
+    const label = item.label ? `${item.label} · ${item.umo}` : item.umo;
+    options.push(
+      `<option value="${escapeHtml(item.umo)}">${escapeHtml(label)}</option>`,
+    );
+  }
+  select.innerHTML = options.join("");
+}
+
+function wirePickers() {
+  for (const field of MULTI_FIELDS) {
+    const root = pickerEl(field);
+    if (!root) continue;
+
+    const select = root.querySelector("[data-select]");
+    const manual = root.querySelector("[data-manual]");
+
+    root.querySelector("[data-add-selected]").addEventListener("click", () => {
+      addValue(field, select.value);
+    });
+    root.querySelector("[data-add-manual]").addEventListener("click", () => {
+      addValue(field, manual.value);
+      manual.value = "";
+    });
+    manual.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      addValue(field, manual.value);
+      manual.value = "";
+    });
+    select.addEventListener("change", () => {
+      if (!select.value) return;
+      addValue(field, select.value);
+    });
+  }
+}
+
+function renderAllPickers() {
+  for (const field of MULTI_FIELDS) renderPicker(field);
+}
+
+// ------------------------------------------------------------------ 填充/收集
+
 function fill(settings) {
   const data = settings || {};
   setRadio("outbound_transport", data.outbound_transport || "rest");
   setRadio("inbound_transport", data.inbound_transport || "http");
 
-  for (const name of TEXT_FIELDS) {
-    const el = form.elements[name];
-    if (el) el.value = data[name] ?? "";
-  }
-  for (const name of NUMBER_FIELDS) {
+  for (const name of [...TEXT_FIELDS, ...NUMBER_FIELDS]) {
     const el = form.elements[name];
     if (el) el.value = data[name] ?? "";
   }
   form.elements.verify_ssl.checked = Boolean(data.verify_ssl);
   form.elements.mqtt_tls.checked = Boolean(data.mqtt_tls);
-  form.elements.allowed_umos.value = (data.allowed_umos || []).join("\n");
-  form.elements.blocked_umos.value = (data.blocked_umos || []).join("\n");
 
   for (const name of SECRET_FIELDS) {
     const el = form.elements[name];
@@ -151,15 +249,14 @@ function fill(settings) {
       el.placeholder = name === "inbound_token" ? "留空自动生成" : "未设置";
     }
   }
+
+  for (const field of MULTI_FIELDS) {
+    multi[field] = Array.isArray(data[field]) ? [...data[field]] : [];
+  }
+  renderAllPickers();
+
   if (versionEl && data.version) versionEl.textContent = `v${data.version}`;
   applyVisibility();
-}
-
-function splitList(value) {
-  return String(value || "")
-    .split(/[\n,]/)
-    .map((item) => item.trim())
-    .filter(Boolean);
 }
 
 function collect() {
@@ -168,16 +265,19 @@ function collect() {
     inbound_transport: checked("inbound_transport"),
     verify_ssl: form.elements.verify_ssl.checked,
     mqtt_tls: form.elements.mqtt_tls.checked,
-    allowed_umos: splitList(form.elements.allowed_umos.value),
-    blocked_umos: splitList(form.elements.blocked_umos.value),
   };
+
+  for (const field of MULTI_FIELDS) payload[field] = [...multi[field]];
 
   for (const name of [...TEXT_FIELDS, ...SECRET_FIELDS, ...NUMBER_FIELDS]) {
     const el = form.elements[name];
     if (!el) continue;
     const value = el.value.trim();
     // 密钥与数字留空表示"不修改"，其它文本留空表示"清空"。
-    if (value === "" && (SECRET_FIELDS.includes(name) || NUMBER_FIELDS.includes(name))) {
+    if (
+      value === "" &&
+      (SECRET_FIELDS.includes(name) || NUMBER_FIELDS.includes(name))
+    ) {
       continue;
     }
     payload[name] = value;
@@ -227,26 +327,28 @@ function renderReport(report) {
     .join("");
   reportEl.hidden = false;
   updateChips({
-    outbound_mode: report.outbound?.mode,
-    outbound_ready: report.outbound?.ok,
-    inbound_mode: report.inbound?.mode,
-    inbound_running: report.inbound?.ok,
+    outbound_mode: report.outbound ? report.outbound.mode : undefined,
+    outbound_ready: report.outbound ? report.outbound.ok : undefined,
+    inbound_mode: report.inbound ? report.inbound.mode : undefined,
+    inbound_running: report.inbound ? report.inbound.ok : undefined,
   });
-}
-
-function escapeHtml(text) {
-  return String(text).replace(/[&<>"']/g, (ch) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  })[ch]);
 }
 
 // ------------------------------------------------------------------ 动作
 
+async function loadKnownUmos() {
+  try {
+    const data = await apiGet("settings/umos");
+    knownUmos = Array.isArray(data.umos) ? data.umos : [];
+  } catch (error) {
+    knownUmos = [];
+    console.warn("load umos failed", error);
+  }
+  renderAllPickers();
+}
+
 async function load() {
+  await loadKnownUmos();
   try {
     const data = await apiGet("settings");
     fill({ ...(data.settings || {}), version: data.version });
@@ -270,6 +372,7 @@ async function save(event) {
     fill(data.settings || {});
     updateChips(data.state || {});
     setStatus(data.message || "已保存并生效", "ok");
+    await loadKnownUmos();
   } catch (error) {
     setStatus(`保存失败：${error.message}`, "err");
   } finally {
@@ -300,4 +403,5 @@ for (const radio of document.querySelectorAll(
   radio.addEventListener("change", applyVisibility);
 }
 
+wirePickers();
 load();

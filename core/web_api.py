@@ -42,6 +42,24 @@ async def _body() -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _query(name: str, default: str = "") -> str:
+    try:
+        value = request.query.get(name, default)
+    except AttributeError:  # pragma: no cover - Quart 旧接口
+        value = request.args.get(name, default)
+    if value is None:
+        return default
+    return str(value)
+
+
+def _query_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(_query(name, str(default)) or default)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, value))
+
+
 class HaAgentWebAPI:
     """设置页的三个接口。"""
 
@@ -67,6 +85,24 @@ class HaAgentWebAPI:
             self.test_connection,
             ["POST"],
             "测试出站与入站通道",
+        )
+        registrar(
+            f"/{PLUGIN_NAME}/settings/umos",
+            self.list_umos,
+            ["GET"],
+            "列出已知会话（UMO）候选",
+        )
+        registrar(
+            f"/{PLUGIN_NAME}/logs",
+            self.get_logs,
+            ["GET"],
+            "读取插件日志",
+        )
+        registrar(
+            f"/{PLUGIN_NAME}/logs/clear",
+            self.clear_logs,
+            ["POST"],
+            "清空插件日志缓冲",
         )
 
     async def get_settings(self):
@@ -120,3 +156,38 @@ class HaAgentWebAPI:
             logger.exception("ha-agent: 通道自检失败")
             return error_response("自检失败，请查看 AstrBot 日志", status_code=500)
         return json_response({"success": True, **report})
+
+    async def list_umos(self):
+        """已知会话候选：见过的 + 配置里已经填过的。"""
+        plugin = self.plugin
+        entries = [dict(item) for item in plugin.umo_history.entries()]
+        known = {item["umo"] for item in entries}
+
+        settings = plugin.settings
+        configured = (
+            list(settings.notify_umos)
+            + list(settings.allowed_umos)
+            + list(settings.blocked_umos)
+        )
+        for umo in configured:
+            if umo and umo not in known:
+                entries.append({"umo": umo, "label": "", "last_seen": ""})
+                known.add(umo)
+
+        return json_response({"success": True, "umos": entries[:500]})
+
+    async def get_logs(self):
+        plugin = self.plugin
+        limit = _query_int("limit", 200, 1, 800)
+        level = _query("level", "DEBUG").upper()
+        return json_response(
+            {
+                "success": True,
+                "entries": plugin.logs.snapshot(limit=limit, min_level=level),
+                **plugin.logs.stats(),
+            }
+        )
+
+    async def clear_logs(self):
+        self.plugin.logs.clear()
+        return json_response({"success": True, "cleared": True})

@@ -76,6 +76,15 @@ def normalize_ha_url(raw: object) -> str:
     return text
 
 
+def resolve_notify_targets(cfg: Any) -> tuple[str, ...]:
+    """合并 ``notify_umos`` 与 1.x 的单个 ``notify_umo``，去重保序。"""
+    targets = normalize_umo_list(cfg.get("notify_umos"))
+    legacy = str(cfg.get("notify_umo") or "").strip()
+    if legacy:
+        targets.append(legacy)
+    return tuple(dict.fromkeys(item for item in targets if item))
+
+
 @dataclass(frozen=True)
 class Settings:
     """一份解析完成的插件配置快照。"""
@@ -88,7 +97,7 @@ class Settings:
     inbound_transport: str = "http"
     inbound_port: int = DEFAULT_INBOUND_PORT
     inbound_token: str = ""
-    notify_umo: str = ""
+    notify_umos: tuple[str, ...] = ()
     allowed_umos: tuple[str, ...] = ()
     blocked_umos: tuple[str, ...] = ()
     mqtt_host: str = ""
@@ -116,7 +125,7 @@ class Settings:
     @property
     def notify_enabled(self) -> bool:
         """是否配置了告警目标。留空即完全不推送。"""
-        return bool(self.notify_umo)
+        return bool(self.notify_umos)
 
     @property
     def mqtt_command_topic(self) -> str:
@@ -147,7 +156,7 @@ class Settings:
                 cfg.get("inbound_port"), DEFAULT_INBOUND_PORT, _LISTEN_PORT_MIN
             ),
             inbound_token=str(cfg.get("inbound_token") or "").strip(),
-            notify_umo=str(cfg.get("notify_umo") or "").strip(),
+            notify_umos=resolve_notify_targets(cfg),
             allowed_umos=tuple(normalize_umo_list(cfg.get("allowed_umos"))),
             blocked_umos=tuple(normalize_umo_list(cfg.get("blocked_umos"))),
             mqtt_host=str(cfg.get("mqtt_host") or "").strip(),

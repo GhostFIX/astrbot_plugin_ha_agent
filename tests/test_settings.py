@@ -14,7 +14,7 @@ BASE = {
     "event_type": "astrbot_command",
     "verify_ssl": True,
     "inbound_port": 6199,
-    "notify_umo": "aiocqhttp:GroupMessage:9",
+    "notify_umos": ["aiocqhttp:GroupMessage:9"],
     "allowed_umos": ["a"],
     "blocked_umos": [],
     "mqtt_host": "",

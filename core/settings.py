@@ -14,7 +14,7 @@ import re
 from typing import Any, Mapping
 
 from .access import normalize_umo_list
-from .config import normalize_ha_url, normalize_topic_prefix
+from .config import normalize_ha_url, normalize_topic_prefix, resolve_notify_targets
 from .constants import DEFAULT_EVENT_TYPE
 
 SECRET_FIELDS = ("ha_token", "mqtt_password", "inbound_token")
@@ -103,7 +103,7 @@ def public_snapshot(config: Mapping[str, Any] | None) -> dict[str, Any]:
         "event_type": text("event_type", DEFAULT_EVENT_TYPE) or DEFAULT_EVENT_TYPE,
         "verify_ssl": flag("verify_ssl", True),
         "inbound_port": _safe_int(cfg.get("inbound_port"), 6199),
-        "notify_umo": text("notify_umo"),
+        "notify_umos": list(resolve_notify_targets(cfg)),
         "allowed_umos": list(normalize_umo_list(cfg.get("allowed_umos"))),
         "blocked_umos": list(normalize_umo_list(cfg.get("blocked_umos"))),
         "mqtt_host": text("mqtt_host"),
@@ -177,8 +177,18 @@ def merge_payload(
             raise SettingsError("主题前缀不能为空")
         merged["mqtt_topic_prefix"] = prefix
 
-    if "notify_umo" in payload:
-        merged["notify_umo"] = _clean(payload["notify_umo"], _MAX_TEXT, "告警目标")
+    if "notify_umos" in payload:
+        targets = normalize_umo_list(payload["notify_umos"])
+        if len(targets) > 200:
+            raise SettingsError("告警目标最多 200 个")
+        merged["notify_umos"] = targets
+        # 1.x 的单个 notify_umo 会被并进列表，这里顺手清掉避免复活。
+        merged.pop("notify_umo", None)
+    elif "notify_umo" in payload:
+        legacy = str(payload["notify_umo"] or "").strip()
+        merged["notify_umos"] = [legacy] if legacy else []
+        merged.pop("notify_umo", None)
+
     for field, label in (("allowed_umos", "白名单"), ("blocked_umos", "黑名单")):
         if field in payload:
             merged[field] = normalize_umo_list(payload[field])

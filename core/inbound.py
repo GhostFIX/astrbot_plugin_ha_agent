@@ -12,15 +12,25 @@ from __future__ import annotations
 import hmac
 import json
 import logging
+from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 from aiohttp import web
 
 from .constants import INBOUND_PATH, MAX_NOTIFY_CHARS
 
-# (是否投递成功, 失败原因)。原因会映射成 HTTP 状态码。
-DeliverResult = tuple[bool, str | None]
-Deliver = Callable[[str, str], Awaitable[DeliverResult]]
+
+@dataclass(frozen=True)
+class DeliveryReport:
+    """一次告警投递的结果，可能包含多个目标。"""
+
+    ok: bool
+    error: str | None = None
+    delivered: int = 0
+    total: int = 0
+
+
+Deliver = Callable[[str, str], Awaitable[DeliveryReport]]
 
 _ERROR_STATUS = {
     "notify_umo_not_configured": 409,
@@ -118,16 +128,29 @@ class InboundServer:
 
         title = _coerce_text(payload.get("title"))
         try:
-            ok, error = await self._deliver(title, message)
+            report = await self._deliver(title, message)
         except Exception:  # noqa: BLE001 - 业务层异常也要回一个明确状态码
             self._logger.exception("inbound delivery raised")
-            ok, error = False, "deliver_failed"
+            report = DeliveryReport(False, "deliver_failed")
 
-        if ok:
-            return self._json({"ok": True, "delivered": True}, status=200)
-        code = error or "deliver_failed"
+        if report.ok:
+            return self._json(
+                {
+                    "ok": True,
+                    "delivered": True,
+                    "sent": report.delivered,
+                    "targets": report.total,
+                },
+                status=200,
+            )
+        code = report.error or "deliver_failed"
         return self._json(
-            {"ok": False, "error": code},
+            {
+                "ok": False,
+                "error": code,
+                "sent": report.delivered,
+                "targets": report.total,
+            },
             status=_ERROR_STATUS.get(code, 500),
         )
 

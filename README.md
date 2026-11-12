@@ -42,10 +42,21 @@ HA automation（温度 > 30°C）
 
 | 入口 | 用途 |
 |---|---|
-| 插件详情页 → **设置**（本插件自己的可视化页） | 日常配置。切换 REST/MQTT 后**只显示相关字段**，保存即热生效 |
+| 插件详情页 → **设置**（本插件自己的可视化页） | 日常配置。切换 REST/MQTT 后**只显示相关字段**，告警目标/黑白名单支持下拉多选 + 手填，保存即热生效 |
+| 插件详情页 → **日志** | 只显示本插件日志的内存缓冲（最近 400 条），可过滤级别、自动刷新、清空 |
 | 插件卡片 → **配置**（AstrBot 原生配置页） | 全部 17 项平铺，备查、应急修改；UMO 字段可用会话选择器点选 |
 
 两边读写同一份配置，改哪边都生效。设置页保存后无需重载插件。
+
+## 日志页
+
+插件详情页 → **日志**，只显示本插件产生的日志：
+
+- 来源过滤：日志器名、源文件路径或消息里出现插件目录名才收录，不会混进别家的日志
+- 内存缓冲最近 **400 条**，重载插件后清空；完整日志仍在 AstrBot 的日志文件里
+- 支持级别过滤、3 秒自动刷新（页面不可见时暂停）、手动刷新、清空
+- 悬停右上角计数可看到当前挂在哪些日志器上；如果一直是 0 条，多半是挂载失败，
+  先看 AstrBot 日志里的 `日志缓冲挂载失败`
 
 ## 选哪种？
 
@@ -95,7 +106,7 @@ git clone https://github.com/GhostFIX/astrbot_plugin_ha_agent
 | `inbound_transport` | `http` | `http` / `mqtt` / `off` |
 | `inbound_port` | `6199` | **容器内**监听端口，可改 |
 | `inbound_token` | 空 | 留空自动生成，存 `data/plugin_data/astrbot_plugin_ha_agent/inbound_token.txt` |
-| `notify_umo` | 空 | 告警推送目标会话；**留空 = 不接收告警** |
+| `notify_umos` | `[]` | 告警推送目标会话（**可多选**）；留空 = 不接收告警 |
 
 ### MQTT
 
@@ -115,8 +126,8 @@ git clone https://github.com/GhostFIX/astrbot_plugin_ha_agent
 | `allowed_umos` | `[]` | 指令白名单，空 = 不限制 |
 | `blocked_umos` | `[]` | 指令黑名单，优先级高于白名单 |
 
-`notify_umo` 获取：在目标会话发一条 `/ha`，帮助卡片会显示当前会话 UMO，
-复制粘贴即可；也可以直接用 WebUI 的会话选择器点选。
+告警目标怎么填：在目标会话发一条 `/ha`，帮助卡片会显示当前会话 UMO；设置页
+里既可以下拉选（发过 `/ha` 的会话会自动进候选），也可以手动粘贴，支持多选。
 
 ## 快速开始（REST）
 
@@ -284,7 +295,7 @@ Content-Type: application/json
 
 | 情况 | 状态码 | 返回 |
 |---|---|---|
-| 成功 | 200 | `{"ok": true, "delivered": true}` |
+| 成功 | 200 | `{"ok": true, "delivered": true, "sent": 2, "targets": 2}` |
 | 令牌错误/缺失 | 401 | `{"ok": false, "error": "invalid_token"}` |
 | 未配置告警目标 | 409 | `{"ok": false, "error": "notify_umo_not_configured"}` |
 | 消息为空 | 400 | `{"ok": false, "error": "empty_message"}` |
@@ -310,7 +321,7 @@ Content-Type: application/json
 | `❌ 未安装 paho-mqtt` | 依赖没装上 | `pip install paho-mqtt` 后重载插件 |
 | `✅ 已发送` 但 HA 没动 | 事件名/主题不同、自动化没启用、条件写错 | 开发者工具→事件监听，或 MQTTX 订阅对应主题对比内容 |
 | HA 报 401 | 两边令牌不一致 | 核对 `inbound_token` 与 `secrets.yaml` |
-| HA 报 409 | 没配告警目标 | 填 `notify_umo` |
+| HA 报 409 | 没配告警目标 | 填 `notify_umos` |
 | HA 报 502 | 目标平台掉线或 UMO 写错 | 发 `/ha` 看帮助卡片里的 UMO |
 | 接口成功但群里没消息 | 平台不支持主动消息（如 QQ 官方接口） | 换 OneBot / Telegram 等平台 |
 | 帮助卡片显示端口绑定失败 | 端口被占用 | 改 `inbound_port` 并同步改 HA 侧 URL |
@@ -351,12 +362,14 @@ main.py            指令、帮助卡片、生命周期、传输选择、设置�
 core/access.py     会话黑白名单
 core/config.py     配置归一化
 core/settings.py   设置页的快照脱敏、校验与合并
-core/web_api.py    设置页后端接口（register_web_api）
-core/store.py      回传令牌生成与持久化
+core/logs.py       日志缓冲（按来源过滤、跨日志器去重）
+core/web_api.py    设置页/日志页后端接口（register_web_api）
+core/store.py      回传令牌生成与持久化、已知 UMO 历史
 core/transport.py  Transport 协议 + RestTransport
 core/mqtt.py       MqttBridge（paho 适配）+ MqttTransport
 core/inbound.py    告警回传 HTTP 监听
 views/settings/    设置页（index.html + app.js + style.css）
+views/logs/        日志页
 tests/             单测 + 冒烟 + 前后端契约（字段名/接口/版本号比对）
 ```
 
@@ -365,8 +378,8 @@ tests/             单测 + 冒烟 + 前后端契约（字段名/接口/版本�
 
 **测试边界**：REST 方向用真实的本地 HTTP 服务往返；MQTT 方向用假 paho 客户端
 覆盖回调转接、主题路由、发布与错误分支，**没有对真实 Broker 做过联调**；
-设置页的 HTML/JS 只做了静态契约校验（`tests/test_view_contract.py` 比对字段名、
-单选值、接口路径、版本号），**没有在真实浏览器里点过**。
+设置页与日志页的 HTML/JS 只做了静态契约校验（`tests/test_view_contract.py` 比对字段名、
+单选值、接口路径、版本号、DOM id），**没有在真实浏览器里点过**。
 
 ## License
 

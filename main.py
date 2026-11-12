@@ -27,10 +27,11 @@ from .core.constants import (
     MAX_COMMAND_CHARS,
     PLUGIN_NAME,
 )
-from .core.inbound import InboundServer
+from .core.inbound import DeliveryReport, InboundServer
+from .core.logs import LogBuffer
 from .core.mqtt import MqttBridge, MqttError, MqttTransport
 from .core.settings import merge_payload, public_snapshot
-from .core.store import SecretStore
+from .core.store import SecretStore, UmoHistory
 from .core.transport import RestTransport, TransportError
 from .core.web_api import HaAgentWebAPI
 
@@ -76,6 +77,8 @@ class HaAgentPlugin(Star):
             logger.exception("ha-agent data directory could not be created")
 
         self.secret_store = SecretStore(self.data_dir / INBOUND_TOKEN_FILE)
+        # 见过的会话，供设置页下拉选择。
+        self.umo_history = UmoHistory(self.data_dir / "known_umos.json")
         # 配置里填了就用配置值，留空则用自动生成的令牌。
         self.inbound_token = self.settings.inbound_token
         if not self.inbound_token:
@@ -85,6 +88,10 @@ class HaAgentPlugin(Star):
         self.inbound: InboundServer | None = None
         self._bridge: MqttBridge | None = None
         self.last_saved_at = ""
+
+        # WebUI 日志页的数据来源：挂在 AstrBot 的日志器上，只保留本插件的记录。
+        self.logs = LogBuffer()
+        self._attach_logs()
 
         self.web_api = HaAgentWebAPI(self)
         try:
@@ -103,10 +110,37 @@ class HaAgentPlugin(Star):
         """插件加载完成后按配置建立出站通道与入站监听。"""
         self._warn_configuration()
         await self._apply_runtime()
+        self.logs.record(
+            "INFO",
+            f"通道已就绪：出站 {self.settings.outbound_transport}，"
+            f"入站 {self.settings.inbound_transport}"
+            f"，告警目标 {len(self.settings.notify_umos)} 个",
+        )
 
     async def terminate(self) -> None:
         """插件卸载/停用时释放端口、连接池与 MQTT 连接。"""
         await self._shutdown_runtime()
+        self.logs.detach()
+
+    def _attach_logs(self) -> None:
+        """把日志缓冲挂到可用的日志器上；挂不上也不影响插件运行。"""
+        candidates = [
+            getattr(self, "logger", None),  # 有的版本会给每个插件独立 logger
+            logger,
+            logging.getLogger("astrbot"),
+        ]
+        try:
+            names = self.logs.attach(candidates)
+            if not names:
+                # 都挂不上时退到 root，再靠来源过滤只收本插件的记录。
+                names = self.logs.attach([logging.getLogger()])
+        except Exception:  # noqa: BLE001
+            names = []
+            logger.exception("%s: 日志缓冲挂载失败", PLUGIN_NAME)
+        self.logs.record(
+            "INFO",
+            f"{PLUGIN_NAME} 日志缓冲已启动（监听：{'、'.join(names) or '无'}）",
+        )
 
     async def _apply_runtime(self) -> None:
         """按当前配置重建全部通道。改配置后也走这里热生效。"""
@@ -147,7 +181,7 @@ class HaAgentPlugin(Star):
             logger.warning("%s: %s 未配置，/ha 指令暂不可用", PLUGIN_NAME, hint)
         if not settings.notify_enabled:
             logger.warning(
-                "%s: notify_umo 未配置，HA 推来的告警将被丢弃", PLUGIN_NAME
+                "%s: 未配置告警目标，HA 推来的告警将被丢弃", PLUGIN_NAME
             )
 
     def _setup_outbound(self) -> None:
@@ -240,6 +274,14 @@ class HaAgentPlugin(Star):
         """合并并落盘配置，再按新配置重建通道；返回更新后的快照。"""
         merged = merge_payload(self.config, payload)
 
+        # 1.x 的单值 notify_umo 已被 notify_umos 取代，保存时清掉旧键，
+        # 否则它会在下次读取时被当成目标"复活"。
+        if "notify_umos" in merged and "notify_umo" in self.config:
+            try:
+                self.config.pop("notify_umo", None)
+            except Exception:  # noqa: BLE001
+                logger.debug("legacy notify_umo cleanup failed", exc_info=True)
+
         saver = getattr(self.config, "save_config", None)
         if callable(saver):
             # AstrBotConfig：更新内存字典并写入 data/config/<插件>_config.json
@@ -254,6 +296,13 @@ class HaAgentPlugin(Star):
             self.inbound_token = self.settings.inbound_token
         elif not self.inbound_token:
             self.inbound_token, _ = self.secret_store.ensure_token()
+
+        # 手填的 UMO 也进候选，下次就不用再抄。
+        self.umo_history.remember_many(
+            list(self.settings.notify_umos)
+            + list(self.settings.allowed_umos)
+            + list(self.settings.blocked_umos)
+        )
 
         self.last_saved_at = datetime.now().astimezone().isoformat(timespec="seconds")
         await self._apply_runtime()
@@ -301,7 +350,7 @@ class HaAgentPlugin(Star):
             "outbound": outbound,
             "inbound": inbound,
             "notify_enabled": settings.notify_enabled,
-            "notify_umo": settings.notify_umo,
+            "notify_umos": list(settings.notify_umos),
         }
 
     # ------------------------------------------------------------------ 指令
@@ -341,6 +390,9 @@ class HaAgentPlugin(Star):
                 )
             return
 
+        # 记下这个会话，设置页的下拉候选里才有它。
+        self.umo_history.remember(umo, self._sender_label(event))
+
         payload = self._build_payload(event, umo, command)
         try:
             await self.transport.send(payload)
@@ -359,42 +411,61 @@ class HaAgentPlugin(Star):
 
     # ------------------------------------------------------------------ 入站
 
-    async def _deliver(self, title: str, message: str) -> tuple[bool, str | None]:
-        """把 HA 推来的文字发到配置的会话。返回 (是否成功, 失败原因)。"""
-        target = self.settings.notify_umo
-        if not target:
-            return False, "notify_umo_not_configured"
+    async def _deliver(self, title: str, message: str) -> DeliveryReport:
+        """把 HA 推来的文字发到配置的会话（可能多个）。"""
+        targets = self.settings.notify_umos
+        if not targets:
+            return DeliveryReport(False, "notify_umo_not_configured")
 
         text = f"【{title}】\n{message}" if title else message
         try:
             chain = MessageChain().message(text)
         except Exception:  # noqa: BLE001 - 兼容个别版本的 MessageChain 构造差异
             logger.exception("%s: build message chain failed", PLUGIN_NAME)
-            return False, "deliver_failed"
+            return DeliveryReport(False, "deliver_failed", 0, len(targets))
 
-        try:
-            delivered = await self.context.send_message(target, chain)
-        except ValueError:
-            # UMO 字符串不合法，通常是手抄时少了平台前缀。
-            logger.warning("%s: invalid notify_umo %r", PLUGIN_NAME, target)
-            return False, "platform_not_found"
-        except Exception:  # noqa: BLE001
-            logger.exception("%s: send_message failed", PLUGIN_NAME)
-            return False, "deliver_failed"
+        delivered = 0
+        for target in targets:
+            try:
+                ok = bool(await self.context.send_message(target, chain))
+            except ValueError:
+                # UMO 字符串不合法，通常是手抄时少了平台前缀。
+                logger.warning("%s: 告警目标格式不合法 %r", PLUGIN_NAME, target)
+                ok = False
+            except Exception:  # noqa: BLE001
+                logger.exception("%s: 向 %s 发送失败", PLUGIN_NAME, target)
+                ok = False
 
-        if not delivered:
+            if ok:
+                delivered += 1
+                self.umo_history.remember(target)
+            else:
+                logger.warning("%s: 告警目标 %s 未送达到", PLUGIN_NAME, target)
+
+        if delivered == 0:
+            return DeliveryReport(False, "platform_not_found", 0, len(targets))
+        if delivered < len(targets):
             logger.warning(
-                "%s: 没有平台实例匹配 notify_umo=%s", PLUGIN_NAME, target
+                "%s: 告警部分送达 %s/%s", PLUGIN_NAME, delivered, len(targets)
             )
-            return False, "platform_not_found"
-        return True, None
+        return DeliveryReport(True, None, delivered, len(targets))
 
     async def _handle_mqtt_notify(self, title: str, message: str) -> None:
         """MQTT 入站：没有 HTTP 状态码，失败只写日志。"""
-        ok, error = await self._deliver(title, message)
-        if not ok:
+        report = await self._deliver(title, message)
+        if not report.ok:
             logger.warning(
-                "%s: MQTT 告警未投递（%s）：%s", PLUGIN_NAME, error, message[:120]
+                "%s: MQTT 告警未投递（%s）：%s",
+                PLUGIN_NAME,
+                report.error,
+                message[:120],
+            )
+        elif report.delivered < report.total:
+            logger.warning(
+                "%s: MQTT 告警部分送达 %s/%s",
+                PLUGIN_NAME,
+                report.delivered,
+                report.total,
             )
 
     # ------------------------------------------------------------------ 工具
@@ -418,6 +489,14 @@ class HaAgentPlugin(Star):
         if raw:
             return raw
         return str(fallback or "").strip()
+
+    @staticmethod
+    def _sender_label(event: AstrMessageEvent) -> str:
+        getter = getattr(event, "get_sender_name", None)
+        try:
+            return str(getter()).strip() if callable(getter) else ""
+        except Exception:  # noqa: BLE001
+            return ""
 
     def _build_payload(
         self, event: AstrMessageEvent, umo: str, command: str
@@ -454,7 +533,11 @@ class HaAgentPlugin(Star):
         lines.append(self._inbound_line())
 
         if settings.notify_enabled:
-            lines.append(f"告警目标：{settings.notify_umo}")
+            targets = list(settings.notify_umos)
+            shown = "、".join(targets[:3])
+            if len(targets) > 3:
+                shown += f" 等 {len(targets)} 个"
+            lines.append(f"告警目标：{shown}")
         else:
             lines.append("告警目标：未配置（HA 推送将被丢弃）")
 

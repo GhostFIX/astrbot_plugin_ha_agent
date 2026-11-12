@@ -112,8 +112,21 @@ def test_lists_are_normalized_into_tuples():
 
 def test_ready_flags():
     settings = Settings.from_config(
-        {"ha_url": "http://ha:8123", "ha_token": "t", "notify_umo": "x:y:z"}
+        {"ha_url": "http://ha:8123", "ha_token": "t", "notify_umos": ["x:y:z"]}
     )
     assert settings.outbound_ready is True
     assert settings.notify_enabled is True
     assert settings.event_url() == "http://ha:8123/api/events/astrbot_command"
+
+
+def test_legacy_single_notify_umo_is_merged():
+    settings = Settings.from_config({"notify_umo": "a:b:1"})
+    assert settings.notify_umos == ("a:b:1",)
+    assert settings.notify_enabled is True
+
+
+def test_notify_targets_are_deduped_and_ordered():
+    settings = Settings.from_config(
+        {"notify_umos": ["a:b:1", "a:b:2", "a:b:1"], "notify_umo": "a:b:2"}
+    )
+    assert settings.notify_umos == ("a:b:1", "a:b:2")

@@ -254,6 +254,93 @@ code {
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
 }
 
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.picker-label {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 9px;
+  background: #fbfcfe;
+}
+
+.chip-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 3px 4px 3px 9px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: #0b5566;
+  font-size: 11.5px;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+.chip-x {
+  border: none;
+  background: transparent;
+  color: #0b5566;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 3px;
+  cursor: pointer;
+  border-radius: 50%;
+}
+
+.chip-x:hover {
+  color: var(--err);
+}
+
+.chip-empty {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 22px;
+}
+
+.picker-row {
+  display: flex;
+  gap: 8px;
+}
+
+.picker-row select,
+.picker-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font: inherit;
+  background: #fbfcfe;
+  color: inherit;
+}
+
+.picker-row select:focus,
+.picker-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(14, 116, 144, 0.12);
+}
+
+.picker em {
+  font-style: normal;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
 .actions {
   display: flex;
   align-items: center;

@@ -59,12 +59,12 @@
     "secret": true,
     "hint": "留空则由插件自动生成并保存到 data/plugin_data/astrbot_plugin_ha_agent/inbound_token.txt 。管理员在私聊发送 /ha 可查看。"
   },
-  "notify_umo": {
-    "description": "告警推送目标会话",
-    "type": "string",
-    "default": "",
+  "notify_umos": {
+    "description": "告警推送目标会话（可多选）",
+    "type": "list",
+    "default": [],
     "_special": "umo",
-    "hint": "留空表示不接收任何告警。会话选择器支持直接粘贴 UMO；在目标会话发送 /ha 可查看自己的 UMO。"
+    "hint": "可以选多个会话；留空表示不接收任何告警。选择器支持手工粘贴 UMO，在目标会话发送 /ha 可查看自己的 UMO。"
   },
   "allowed_umos": {
     "description": "指令白名单",

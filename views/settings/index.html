@@ -17,7 +17,7 @@
           </div>
         </div>
         <div class="top-actions">
-          <span class="chip" id="version">v1.2.0</span>
+          <span class="chip" id="version">v1.2.1</span>
           <span class="chip" id="chip-out">出站：—</span>
           <span class="chip" id="chip-in">入站：—</span>
         </div>
@@ -157,21 +157,48 @@
             </label>
           </div>
 
-          <label class="field">
-            <span>告警推送目标会话</span>
-            <input name="notify_umo" placeholder="留空 = 不接收告警" />
-            <em>在目标会话里发一条 <code>/ha</code>，帮助卡片会显示 UMO，复制粘贴即可</em>
-          </label>
+          <div class="picker" data-field="notify_umos">
+            <span class="picker-label">告警推送目标会话（可多选）</span>
+            <div class="chips" data-chips></div>
+            <div class="picker-row">
+              <select data-select></select>
+              <button type="button" data-add-selected>添加</button>
+            </div>
+            <div class="picker-row">
+              <input data-manual placeholder="或手动粘贴 UMO" />
+              <button type="button" data-add-manual>添加</button>
+            </div>
+            <em>留空表示不接收告警；在目标会话发一条 <code>/ha</code> 可查看自己的 UMO</em>
+          </div>
 
           <div class="grid2">
-            <label class="field">
-              <span>指令白名单</span>
-              <textarea name="allowed_umos" rows="3" placeholder="每行一个 UMO，留空 = 不限制"></textarea>
-            </label>
-            <label class="field">
-              <span>指令黑名单</span>
-              <textarea name="blocked_umos" rows="3" placeholder="每行一个 UMO，优先级高于白名单"></textarea>
-            </label>
+            <div class="picker" data-field="allowed_umos">
+              <span class="picker-label">指令白名单</span>
+              <div class="chips" data-chips></div>
+              <div class="picker-row">
+                <select data-select></select>
+                <button type="button" data-add-selected>添加</button>
+              </div>
+              <div class="picker-row">
+                <input data-manual placeholder="或手动粘贴 UMO" />
+                <button type="button" data-add-manual>添加</button>
+              </div>
+              <em>留空 = 不限制</em>
+            </div>
+
+            <div class="picker" data-field="blocked_umos">
+              <span class="picker-label">指令黑名单</span>
+              <div class="chips" data-chips></div>
+              <div class="picker-row">
+                <select data-select></select>
+                <button type="button" data-add-selected>添加</button>
+              </div>
+              <div class="picker-row">
+                <input data-manual placeholder="或手动粘贴 UMO" />
+                <button type="button" data-add-manual>添加</button>
+              </div>
+              <em>优先级高于白名单</em>
+            </div>
           </div>
         </section>
 
