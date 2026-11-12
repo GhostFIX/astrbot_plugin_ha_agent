@@ -1,13 +1,16 @@
 """把指令送到 Home Assistant 的传输层。
 
-当前只有一种实现 :class:`RestTransport`：调用 HA 的 REST API
-``POST /api/events/<event_type>``，让命令落到 HA 的事件总线上。
+两种实现，由配置里的 ``outbound_transport`` 选择：
 
-之所以用事件而不是直接调 service：HA 的事件总线按"发生了一次"设计，
-同一条命令重复发送每次都会送达；而实体/状态是按"当前值"设计的，相同值
-不会产生状态变化。命令是事件，不是状态。
+- :class:`RestTransport`（默认）：调用 HA REST API
+  ``POST /api/events/<event_type>``，命令落到 HA 事件总线；
+- :class:`core.mqtt.MqttTransport`：发布到 MQTT 主题，HA 用 ``mqtt`` 触发器监听。
 
-``Transport`` 协议留给以后可能的 MQTT 实现，业务代码不感知具体传输方式。
+二者都是"发一条消息"，语义一致，所以业务层只依赖 :class:`Transport` 协议。
+
+之所以默认用事件而不是实体：HA 的事件总线按"发生了一次"设计，同一条命令
+重复发送每次都会送达；而实体/状态按"当前值"设计，相同值不产生状态变化。
+MQTT 同理——用 ``mqtt`` 触发器而不是传感器状态触发器，就没有这个问题。
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import aiohttp
 
-from .constants import HA_PING_TIMEOUT, HA_REQUEST_TIMEOUT
+from .constants import DEFAULT_EVENT_TYPE, HA_PING_TIMEOUT, HA_REQUEST_TIMEOUT
 
 
 class TransportError(RuntimeError):
@@ -68,34 +71,40 @@ def describe_exception(exc: BaseException) -> str:
 
 @runtime_checkable
 class Transport(Protocol):
-    """传输层接口：发事件、探活、释放资源。"""
+    """传输层接口：发消息、探活、释放资源。"""
 
-    async def fire_event(self, event_type: str, data: dict[str, Any]) -> None:
-        """把 ``data`` 作为事件负载发给 HA，失败抛 :class:`TransportError`。"""
+    label: str
+    """出现在回复里的传输方式说明，例如 ``HA 事件 · astrbot_command``。"""
+
+    async def send(self, payload: dict[str, Any]) -> None:
+        """把 ``payload`` 发出去，失败抛异常。"""
 
     async def ping(self) -> tuple[bool, str]:
-        """探测 HA 是否可达，返回 (是否可达, 说明)。"""
+        """探测通道是否可用，返回 (是否可用, 说明)。"""
 
     async def close(self) -> None:
         """释放底层连接。"""
 
 
 class RestTransport:
-    """基于 HA REST API 的实现。"""
+    """基于 Home Assistant REST API 的实现。"""
 
     def __init__(
         self,
         base_url: str,
         token: str,
         *,
+        event_type: str = DEFAULT_EVENT_TYPE,
         verify_ssl: bool = True,
         timeout: float = HA_REQUEST_TIMEOUT,
     ) -> None:
         self._base = base_url.rstrip("/")
         self._token = token
+        self._event_type = event_type
         self._verify_ssl = verify_ssl
         self._timeout = timeout
         self._session: aiohttp.ClientSession | None = None
+        self.label = f"HA · {event_type}"
 
     @property
     def base_url(self) -> str:
@@ -121,10 +130,10 @@ class RestTransport:
         )
         return self._session
 
-    async def fire_event(self, event_type: str, data: dict[str, Any]) -> None:
-        url = f"{self._base}/events/{event_type}"
+    async def send(self, payload: dict[str, Any]) -> None:
+        url = f"{self._base}/events/{self._event_type}"
         # 先序列化成字节，避免不同 aiohttp 版本对 json= 的编码差异。
-        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         session = await self._ensure_session()
         try:
             async with session.post(url, data=body, headers=self._headers()) as resp:

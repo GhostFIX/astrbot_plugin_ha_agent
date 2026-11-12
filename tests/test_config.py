@@ -29,9 +29,58 @@ def test_defaults_when_config_is_empty():
     assert settings.event_type == "astrbot_command"
     assert settings.inbound_port == 6199
     assert settings.verify_ssl is True
-    assert settings.inbound_enabled is True
+    assert settings.outbound_transport == "rest"
+    assert settings.inbound_transport == "http"
     assert settings.outbound_ready is False
     assert settings.notify_enabled is False
+    assert settings.mqtt_port == 1883
+    assert settings.mqtt_topic_prefix == "astrbot/ha"
+    assert settings.uses_mqtt is False
+
+
+def test_transport_choices_fall_back_to_defaults():
+    assert Settings.from_config({"outbound_transport": "bogus"}).outbound_transport == (
+        "rest"
+    )
+    assert Settings.from_config({"inbound_transport": "bogus"}).inbound_transport == (
+        "http"
+    )
+    assert Settings.from_config({"outbound_transport": "MQTT"}).outbound_transport == (
+        "mqtt"
+    )
+    assert Settings.from_config({"inbound_transport": "off"}).inbound_transport == (
+        "off"
+    )
+
+
+def test_mqtt_topics_are_derived_from_prefix():
+    settings = Settings.from_config({"mqtt_topic_prefix": "home/astrbot"})
+    assert settings.mqtt_command_topic == "home/astrbot/command"
+    assert settings.mqtt_notify_topic == "home/astrbot/notify"
+
+    sloppy = Settings.from_config({"mqtt_topic_prefix": "/home/astrbot/"})
+    assert sloppy.mqtt_topic_prefix == "home/astrbot"
+
+    blank = Settings.from_config({"mqtt_topic_prefix": "   "})
+    assert blank.mqtt_topic_prefix == "astrbot/ha"
+
+
+def test_mqtt_port_validation():
+    assert Settings.from_config({"mqtt_port": 0}).mqtt_port == 1883
+    assert Settings.from_config({"mqtt_port": 70000}).mqtt_port == 1883
+    assert Settings.from_config({"mqtt_port": "8883"}).mqtt_port == 8883
+
+
+def test_mqtt_readiness_ignores_ha_rest_fields():
+    settings = Settings.from_config(
+        {"outbound_transport": "mqtt", "mqtt_host": "192.168.1.5"}
+    )
+    assert settings.mqtt_ready is True
+    assert settings.outbound_ready is True
+    assert settings.uses_mqtt is True
+
+    rest = Settings.from_config({"outbound_transport": "mqtt"})
+    assert rest.outbound_ready is False
 
 
 def test_event_type_rejects_illegal_characters():

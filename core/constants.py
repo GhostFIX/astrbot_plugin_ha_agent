@@ -23,5 +23,11 @@ MAX_NOTIFY_CHARS = 4000
 HA_REQUEST_TIMEOUT = 10.0
 HA_PING_TIMEOUT = 3.0
 
+# MQTT 默认值。主题前缀可在配置里改，两侧主题由前缀派生。
+MQTT_DEFAULT_PORT = 1883
+MQTT_KEEPALIVE = 60
+MQTT_QOS = 1
+MQTT_TOPIC_PREFIX = "astrbot/ha"
+
 DATA_DIR_NAME = "plugin_data"
 INBOUND_TOKEN_FILE = "inbound_token.txt"

@@ -2,11 +2,10 @@
 
 这个插件不调用任何大模型，只做两件事：
 
-1. ``/ha <文字>``：把 ``<文字>`` 原样作为 ``command`` 发到 HA 事件总线；
-2. 监听 ``/ha/notify``：把 HA 推来的告警文字转发到配置里指定的会话。
+1. ``/ha <文字>``：把 ``<文字>`` 原样作为 ``command`` 发到 HA（REST 事件或 MQTT）；
+2. 接收 HA 推来的告警文字（HTTP 端口或 MQTT 订阅），转发到配置的会话。
 
-设计取舍见 README：命令用 HA 事件总线而不是实体，因为事件按"发生"设计，
-同一条命令重复发送每次都会送达。
+出站与入站的传输方式各自独立可选：REST / MQTT / 关闭。
 """
 
 from __future__ import annotations
@@ -29,6 +28,7 @@ from .core.constants import (
     PLUGIN_NAME,
 )
 from .core.inbound import InboundServer
+from .core.mqtt import MqttBridge, MqttError, MqttTransport
 from .core.store import SecretStore
 from .core.transport import RestTransport, TransportError
 
@@ -64,6 +64,7 @@ class HaAgentPlugin(Star):
         self.config = config if config is not None else {}
         self.settings = Settings.from_config(self.config)
         self.inbound_error = ""
+        self.mqtt_error = ""
 
         data_root = Path(get_astrbot_data_path())
         self.data_dir = data_root / DATA_DIR_NAME / PLUGIN_NAME
@@ -78,31 +79,83 @@ class HaAgentPlugin(Star):
         if not self.inbound_token:
             self.inbound_token, _ = self.secret_store.ensure_token()
 
-        self.transport: RestTransport | None = None
-        if self.settings.outbound_ready:
-            self.transport = RestTransport(
-                self.settings.ha_url,
-                self.settings.ha_token,
-                verify_ssl=self.settings.verify_ssl,
-            )
+        self.transport: RestTransport | MqttTransport | None = None
         self.inbound: InboundServer | None = None
+        self._bridge: MqttBridge | None = None
 
     # ---------------------------------------------------------------- 生命周期
 
     async def initialize(self) -> None:
-        """插件加载完成后启动告警回传监听。"""
-        if not self.settings.outbound_ready:
-            logger.warning(
-                "%s: ha_url 或 ha_token 未配置，/ha 指令暂不可用",
-                PLUGIN_NAME,
+        """插件加载完成后按配置建立出站通道与入站监听。"""
+        self._warn_configuration()
+        self._setup_outbound()
+        await self._setup_inbound()
+
+    async def terminate(self) -> None:
+        """插件卸载/停用时释放端口、连接池与 MQTT 连接。"""
+        if self.inbound is not None:
+            try:
+                await self.inbound.stop()
+            except Exception:  # noqa: BLE001 - 卸载阶段不抛异常
+                logger.exception("%s: inbound server stop failed", PLUGIN_NAME)
+            self.inbound = None
+        if self.transport is not None:
+            try:
+                await self.transport.close()
+            except Exception:  # noqa: BLE001
+                logger.exception("%s: transport close failed", PLUGIN_NAME)
+        if self._bridge is not None:
+            try:
+                self._bridge.stop()
+            except Exception:  # noqa: BLE001
+                logger.exception("%s: mqtt bridge stop failed", PLUGIN_NAME)
+            self._bridge = None
+
+    def _warn_configuration(self) -> None:
+        settings = self.settings
+        if not settings.outbound_ready:
+            hint = (
+                "mqtt_host"
+                if settings.outbound_transport == "mqtt"
+                else "ha_url / ha_token"
             )
-        if not self.settings.notify_enabled:
+            logger.warning("%s: %s 未配置，/ha 指令暂不可用", PLUGIN_NAME, hint)
+        if not settings.notify_enabled:
             logger.warning(
-                "%s: notify_umo 未配置，HA 的告警推送将被拒绝（409）",
-                PLUGIN_NAME,
+                "%s: notify_umo 未配置，HA 推来的告警将被丢弃", PLUGIN_NAME
             )
-        if not self.settings.inbound_enabled:
-            logger.info("%s: 告警回传监听已关闭", PLUGIN_NAME)
+
+    def _setup_outbound(self) -> None:
+        settings = self.settings
+        if settings.outbound_transport == "mqtt":
+            bridge = self._ensure_bridge()
+            if bridge is not None:
+                self.transport = MqttTransport(bridge, settings.mqtt_command_topic)
+            return
+        if settings.ha_url and settings.ha_token:
+            self.transport = RestTransport(
+                settings.ha_url,
+                settings.ha_token,
+                event_type=settings.event_type,
+                verify_ssl=settings.verify_ssl,
+            )
+
+    async def _setup_inbound(self) -> None:
+        mode = self.settings.inbound_transport
+        if mode == "off":
+            logger.info("%s: 告警回传已关闭", PLUGIN_NAME)
+            return
+
+        if mode == "mqtt":
+            if self._ensure_bridge() is None:
+                self.inbound_error = self.mqtt_error or "MQTT 未就绪"
+                logger.error("%s: %s", PLUGIN_NAME, self.inbound_error)
+            else:
+                logger.info(
+                    "%s: MQTT 告警订阅已启动 %s",
+                    PLUGIN_NAME,
+                    self.settings.mqtt_notify_topic,
+                )
             return
 
         server = InboundServer(
@@ -125,25 +178,42 @@ class HaAgentPlugin(Star):
             server.path,
         )
 
-    async def terminate(self) -> None:
-        """插件卸载/停用时释放端口与连接池。"""
-        if self.inbound is not None:
-            try:
-                await self.inbound.stop()
-            except Exception:  # noqa: BLE001 - 卸载阶段不抛异常
-                logger.exception("%s: inbound server stop failed", PLUGIN_NAME)
-            self.inbound = None
-        if self.transport is not None:
-            try:
-                await self.transport.close()
-            except Exception:  # noqa: BLE001
-                logger.exception("%s: transport close failed", PLUGIN_NAME)
+    def _ensure_bridge(self) -> MqttBridge | None:
+        """按需创建唯一一条 MQTT 连接，出站和入站共用。"""
+        if self._bridge is not None:
+            return self._bridge
+        settings = self.settings
+        if not settings.mqtt_host:
+            self.mqtt_error = "未配置 mqtt_host"
+            return None
+
+        on_notify = (
+            self._handle_mqtt_notify if settings.inbound_transport == "mqtt" else None
+        )
+        bridge = MqttBridge(
+            host=settings.mqtt_host,
+            port=settings.mqtt_port,
+            username=settings.mqtt_username,
+            password=settings.mqtt_password,
+            tls=settings.mqtt_tls,
+            topic_command=settings.mqtt_command_topic,
+            topic_notify=settings.mqtt_notify_topic,
+            on_notify=on_notify,
+        )
+        try:
+            bridge.start()
+        except MqttError as exc:
+            self.mqtt_error = str(exc)
+            logger.error("%s: %s", PLUGIN_NAME, exc)
+            return None
+        self._bridge = bridge
+        return bridge
 
     # ------------------------------------------------------------------ 指令
 
     @filter.command("ha")
     async def ha_command(self, event: AstrMessageEvent, _arg: str = ""):
-        """把 /ha 后面的文字原样发送到 Home Assistant 事件总线。"""
+        """把 /ha 后面的文字原样发送到 Home Assistant。"""
         event.call_llm = False
         umo = str(getattr(event, "unified_msg_origin", "") or "")
         command = self._extract_command(event, _arg)
@@ -166,26 +236,30 @@ class HaAgentPlugin(Star):
             return
 
         if self.transport is None:
-            yield event.plain_result(
-                "❌ 还没配置 Home Assistant：请先在插件配置里填写 "
-                "ha_url 与 ha_token。"
-            )
+            if self.settings.outbound_transport == "mqtt":
+                reason = self.mqtt_error or "未配置 mqtt_host"
+                yield event.plain_result(f"❌ MQTT 未就绪：{reason}")
+            else:
+                yield event.plain_result(
+                    "❌ 还没配置 Home Assistant：请先在插件配置里填写 "
+                    "ha_url 与 ha_token。"
+                )
             return
 
         payload = self._build_payload(event, umo, command)
         try:
-            await self.transport.fire_event(self.settings.event_type, payload)
-        except TransportError as exc:
-            logger.warning("%s: fire_event failed: %s", PLUGIN_NAME, exc)
+            await self.transport.send(payload)
+        except (TransportError, MqttError) as exc:
+            logger.warning("%s: send failed: %s", PLUGIN_NAME, exc)
             yield event.plain_result(f"❌ 发送失败：{exc}")
             return
         except Exception:  # noqa: BLE001 - 兜底，避免一条指令把插件打挂
-            logger.exception("%s: unexpected error while firing event", PLUGIN_NAME)
+            logger.exception("%s: unexpected error while sending", PLUGIN_NAME)
             yield event.plain_result("❌ 发送失败：插件内部错误，请查看 AstrBot 日志。")
             return
 
         yield event.plain_result(
-            f"✅ 已发送 → HA · {self.settings.event_type}\n「{command}」"
+            f"✅ 已发送 → {self.transport.label}\n「{command}」"
         )
 
     # ------------------------------------------------------------------ 入站
@@ -219,6 +293,14 @@ class HaAgentPlugin(Star):
             )
             return False, "platform_not_found"
         return True, None
+
+    async def _handle_mqtt_notify(self, title: str, message: str) -> None:
+        """MQTT 入站：没有 HTTP 状态码，失败只写日志。"""
+        ok, error = await self._deliver(title, message)
+        if not ok:
+            logger.warning(
+                "%s: MQTT 告警未投递（%s）：%s", PLUGIN_NAME, error, message[:120]
+            )
 
     # ------------------------------------------------------------------ 工具
 
@@ -273,32 +355,51 @@ class HaAgentPlugin(Star):
     async def _help_text(self, event: AstrMessageEvent, umo: str) -> str:
         settings = self.settings
         lines = [USAGE_HEAD.rstrip("\n"), "", "当前会话 UMO：", f"  {umo or '（未知）'}", ""]
-
-        if self.transport is not None:
-            reachable, detail = await self.transport.ping()
-            mark = "✓" if reachable else "✗"
-            lines.append(f"HA 地址：{settings.ha_url} {mark} {detail}")
-        else:
-            lines.append(
-                "HA 地址：未配置（请在插件配置里填写 ha_url 与 ha_token）"
-            )
-        lines.append(f"事件类型：{settings.event_type}")
-
-        if not settings.inbound_enabled:
-            lines.append("告警回传：已关闭")
-        elif self.inbound is not None and self.inbound.running:
-            lines.append(f"告警回传：监听 :{self.inbound.port} ✓")
-        else:
-            reason = self.inbound_error or "未启动"
-            lines.append(f"告警回传：✗ {reason}")
+        lines.append(await self._outbound_line())
+        lines.append(self._inbound_line())
 
         if settings.notify_enabled:
             lines.append(f"告警目标：{settings.notify_umo}")
         else:
-            lines.append("告警目标：未配置（HA 推送将被拒绝）")
+            lines.append("告警目标：未配置（HA 推送将被丢弃）")
 
         lines.append(f"回传令牌：{self._token_hint(event)}")
         return "\n".join(lines)
+
+    async def _outbound_line(self) -> str:
+        settings = self.settings
+        if settings.outbound_transport == "mqtt":
+            if self.transport is None:
+                reason = self.mqtt_error or "未配置 mqtt_host"
+                return f"出站：MQTT ✗ {reason}"
+            reachable, detail = await self.transport.ping()
+            mark = "✓" if reachable else "✗"
+            return (
+                f"出站：MQTT → {settings.mqtt_host}:{settings.mqtt_port} "
+                f"{mark} {detail}（主题 {settings.mqtt_command_topic}）"
+            )
+
+        if self.transport is None:
+            return "出站：HA 事件 未配置（请填写 ha_url 与 ha_token）"
+        reachable, detail = await self.transport.ping()
+        mark = "✓" if reachable else "✗"
+        return (
+            f"出站：HA 事件 {settings.event_type} → {settings.ha_url} "
+            f"{mark} {detail}"
+        )
+
+    def _inbound_line(self) -> str:
+        settings = self.settings
+        if settings.inbound_transport == "off":
+            return "入站：已关闭"
+        if settings.inbound_transport == "mqtt":
+            connected = self._bridge is not None and self._bridge.is_connected()
+            mark = "✓" if connected else "✗"
+            note = "" if connected else f" {self.mqtt_error or 'MQTT 未连接'}"
+            return f"入站：MQTT 订阅 {settings.mqtt_notify_topic} {mark}{note}"
+        if self.inbound is not None and self.inbound.running:
+            return f"入站：HTTP :{self.inbound.port} ✓"
+        return f"入站：HTTP ✗ {self.inbound_error or '未启动'}"
 
     def _token_hint(self, event: AstrMessageEvent) -> str:
         if not self.inbound_token:

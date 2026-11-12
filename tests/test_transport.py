@@ -30,7 +30,7 @@ async def _start_fake_ha(handler) -> tuple[web.AppRunner, int]:
     return runner, port
 
 
-def test_fire_event_posts_payload_to_event_endpoint():
+def test_send_posts_payload_to_event_endpoint():
     received: dict = {}
 
     async def handler(request: web.Request) -> web.Response:
@@ -43,7 +43,7 @@ def test_fire_event_posts_payload_to_event_endpoint():
         runner, port = await _start_fake_ha(handler)
         transport = RestTransport(f"http://127.0.0.1:{port}/api", "secret-token")
         try:
-            await transport.fire_event("astrbot_command", {"command": "开电脑"})
+            await transport.send({"command": "开电脑"})
         finally:
             await transport.close()
             await runner.cleanup()
@@ -63,7 +63,7 @@ def test_401_is_reported_with_actionable_message():
         runner, port = await _start_fake_ha(handler)
         transport = RestTransport(f"http://127.0.0.1:{port}/api", "bad")
         try:
-            await transport.fire_event("astrbot_command", {"command": "x"})
+            await transport.send({"command": "x"})
         except TransportError as exc:
             return exc
         finally:
@@ -81,7 +81,7 @@ def test_connection_refused_is_reported():
     async def scenario():
         transport = RestTransport(f"http://127.0.0.1:{_free_port()}/api", "t")
         try:
-            await transport.fire_event("astrbot_command", {"command": "x"})
+            await transport.send({"command": "x"})
         except TransportError as exc:
             return exc
         finally:

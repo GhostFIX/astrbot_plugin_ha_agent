@@ -124,11 +124,12 @@ class FakeEvent:
 
 class FakeTransport:
     def __init__(self) -> None:
-        self.events: list[tuple[str, dict]] = []
+        self.label = "HA · astrbot_command"
+        self.events: list[dict] = []
         self.closed = False
 
-    async def fire_event(self, event_type: str, data: dict) -> None:
-        self.events.append((event_type, data))
+    async def send(self, payload: dict) -> None:
+        self.events.append(payload)
 
     async def ping(self) -> tuple[bool, str]:
         return True, "可达"
@@ -140,7 +141,7 @@ class FakeTransport:
 BASE_CONFIG = {
     "ha_url": "http://127.0.0.1:8123",
     "ha_token": "token",
-    "inbound_enabled": False,
+    "inbound_transport": "off",
 }
 
 
@@ -166,8 +167,7 @@ def test_command_is_forwarded_verbatim():
     assert len(results) == 1
     assert "已发送" in results[0][1]
     assert len(transport.events) == 1
-    event_type, payload = transport.events[0]
-    assert event_type == "astrbot_command"
+    payload = transport.events[0]
     assert payload["command"] == "开电脑"
     assert payload["session"] == "aiocqhttp:GroupMessage:1"
     assert payload["sender"] == "测试用户"
@@ -177,7 +177,7 @@ def test_command_is_forwarded_verbatim():
 def test_inner_spaces_are_preserved():
     plugin, _, transport = _build()
     _run(plugin, FakeEvent("/ha 开 电脑"))
-    assert transport.events[0][1]["command"] == "开 电脑"
+    assert transport.events[0]["command"] == "开 电脑"
 
 
 def test_bare_prefix_shows_help_and_sends_nothing():
@@ -193,7 +193,7 @@ def test_bare_prefix_shows_help_and_sends_nothing():
 def test_stripped_prefix_still_works():
     plugin, _, transport = _build()
     _run(plugin, FakeEvent("开电脑"))
-    assert transport.events[0][1]["command"] == "开电脑"
+    assert transport.events[0]["command"] == "开电脑"
 
 
 def test_blacklisted_session_is_rejected():
@@ -214,7 +214,7 @@ def test_session_outside_whitelist_is_rejected():
 
 def test_missing_ha_config_is_reported():
     ctx = sys.modules["astrbot.api.star"].Context()
-    plugin = HaAgentPlugin(ctx, {"inbound_enabled": False})
+    plugin = HaAgentPlugin(ctx, {"inbound_transport": "off"})
     results = _run(plugin, FakeEvent("/ha 开电脑"))
 
     assert "还没配置" in results[0][1]
@@ -227,7 +227,7 @@ def test_transport_failure_is_surfaced():
     from Github.core.transport import TransportError
 
     class BrokenTransport(FakeTransport):
-        async def fire_event(self, event_type: str, data: dict) -> None:
+        async def send(self, payload: dict) -> None:
             raise TransportError("令牌无效或已被撤销（401）", status=401)
 
     plugin, _, _ = _build()
@@ -310,7 +310,7 @@ def test_inbound_lifecycle_end_to_end():
     port = _free_port()
     plugin, ctx, _ = _build(
         {
-            "inbound_enabled": True,
+            "inbound_transport": "http",
             "inbound_port": port,
             "notify_umo": "aiocqhttp:GroupMessage:9",
         }
@@ -337,3 +337,97 @@ def test_inbound_lifecycle_end_to_end():
     assert body == {"ok": True, "delivered": True}
     assert ctx.sent == [("aiocqhttp:GroupMessage:9", "【高温】\n客厅 31 度")]
     assert plugin.inbound is None
+
+
+# ------------------------------------------------------------ MQTT 模式接线
+
+
+class FakeBridge:
+    def __init__(self, **kwargs) -> None:
+        self.kwargs = kwargs
+        self.started = False
+        self.published: list[dict] = []
+
+    def start(self) -> None:
+        self.started = True
+
+    def stop(self) -> None:
+        self.started = False
+
+    def is_connected(self) -> bool:
+        return self.started
+
+    def publish_command(self, payload: dict) -> None:
+        self.published.append(payload)
+
+
+def _mqtt_config(**overrides) -> dict:
+    return {
+        "outbound_transport": "mqtt",
+        "mqtt_host": "10.0.0.2",
+        "mqtt_port": 1883,
+        "inbound_transport": "off",
+        **overrides,
+    }
+
+
+def test_mqtt_outbound_is_selected_and_used(monkeypatch):
+    import Github.main as main_mod
+
+    monkeypatch.setattr(main_mod, "MqttBridge", FakeBridge)
+    plugin, _, _ = _build(_mqtt_config())
+
+    asyncio.run(plugin.initialize())
+    assert isinstance(plugin.transport, main_mod.MqttTransport)
+
+    results = _run(plugin, FakeEvent("/ha 开电脑"))
+
+    assert "已发送" in results[0][1]
+    assert plugin.transport.label == "MQTT · astrbot/ha/command"
+    assert plugin._bridge.published[0]["command"] == "开电脑"
+
+
+def test_mqtt_inbound_registers_handler(monkeypatch):
+    import Github.main as main_mod
+
+    monkeypatch.setattr(main_mod, "MqttBridge", FakeBridge)
+    plugin, ctx, _ = _build(
+        _mqtt_config(
+            outbound_transport="rest",
+            inbound_transport="mqtt",
+            notify_umo="aiocqhttp:GroupMessage:9",
+        )
+    )
+
+    asyncio.run(plugin.initialize())
+    assert plugin._bridge.kwargs["topic_notify"] == "astrbot/ha/notify"
+    assert plugin._bridge.kwargs["on_notify"] is not None
+
+    asyncio.run(plugin._handle_mqtt_notify("高温", "客厅 31 度"))
+
+    assert ctx.sent == [("aiocqhttp:GroupMessage:9", "【高温】\n客厅 31 度")]
+
+
+def test_help_card_reflects_mqtt_mode(monkeypatch):
+    import Github.main as main_mod
+
+    monkeypatch.setattr(main_mod, "MqttBridge", FakeBridge)
+    plugin, _, _ = _build(_mqtt_config(inbound_transport="mqtt"))
+
+    asyncio.run(plugin.initialize())
+    text = _run(plugin, FakeEvent("/ha", admin=True))[0][1]
+
+    assert "出站：MQTT" in text
+    assert "astrbot/ha/command" in text
+    assert "入站：MQTT 订阅 astrbot/ha/notify" in text
+
+
+def test_mqtt_without_host_reports_not_ready():
+    plugin, _, _ = _build({"outbound_transport": "mqtt", "inbound_transport": "off"})
+    plugin.transport = None
+
+    asyncio.run(plugin.initialize())
+    results = _run(plugin, FakeEvent("/ha 开电脑"))
+
+    assert plugin.transport is None
+    assert "MQTT 未就绪" in results[0][1]
