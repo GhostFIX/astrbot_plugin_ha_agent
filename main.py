@@ -29,8 +29,10 @@ from .core.constants import (
 )
 from .core.inbound import InboundServer
 from .core.mqtt import MqttBridge, MqttError, MqttTransport
+from .core.settings import merge_payload, public_snapshot
 from .core.store import SecretStore
 from .core.transport import RestTransport, TransportError
+from .core.web_api import HaAgentWebAPI
 
 try:  # AstrBot 提供的 logger，能按插件单独调等级。
     from astrbot.api import logger
@@ -82,17 +84,37 @@ class HaAgentPlugin(Star):
         self.transport: RestTransport | MqttTransport | None = None
         self.inbound: InboundServer | None = None
         self._bridge: MqttBridge | None = None
+        self.last_saved_at = ""
+
+        self.web_api = HaAgentWebAPI(self)
+        try:
+            self.web_api.register()
+        except Exception:  # noqa: BLE001 - 老版本没有 register_web_api 也不该炸
+            logger.exception("%s: web API registration failed", PLUGIN_NAME)
+
+    @property
+    def bridge(self) -> MqttBridge | None:
+        """供 WebUI 状态查询用，避免把私有字段暴露给调用方。"""
+        return self._bridge
 
     # ---------------------------------------------------------------- 生命周期
 
     async def initialize(self) -> None:
         """插件加载完成后按配置建立出站通道与入站监听。"""
         self._warn_configuration()
-        self._setup_outbound()
-        await self._setup_inbound()
+        await self._apply_runtime()
 
     async def terminate(self) -> None:
         """插件卸载/停用时释放端口、连接池与 MQTT 连接。"""
+        await self._shutdown_runtime()
+
+    async def _apply_runtime(self) -> None:
+        """按当前配置重建全部通道。改配置后也走这里热生效。"""
+        await self._shutdown_runtime()
+        self._setup_outbound()
+        await self._setup_inbound()
+
+    async def _shutdown_runtime(self) -> None:
         if self.inbound is not None:
             try:
                 await self.inbound.stop()
@@ -104,12 +126,15 @@ class HaAgentPlugin(Star):
                 await self.transport.close()
             except Exception:  # noqa: BLE001
                 logger.exception("%s: transport close failed", PLUGIN_NAME)
+            self.transport = None
         if self._bridge is not None:
             try:
                 self._bridge.stop()
             except Exception:  # noqa: BLE001
                 logger.exception("%s: mqtt bridge stop failed", PLUGIN_NAME)
             self._bridge = None
+        self.inbound_error = ""
+        self.mqtt_error = ""
 
     def _warn_configuration(self) -> None:
         settings = self.settings
@@ -208,6 +233,76 @@ class HaAgentPlugin(Star):
             return None
         self._bridge = bridge
         return bridge
+
+    # -------------------------------------------------------------- 设置热更新
+
+    async def save_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """合并并落盘配置，再按新配置重建通道；返回更新后的快照。"""
+        merged = merge_payload(self.config, payload)
+
+        saver = getattr(self.config, "save_config", None)
+        if callable(saver):
+            # AstrBotConfig：更新内存字典并写入 data/config/<插件>_config.json
+            saver(merged)
+        elif hasattr(self.config, "update"):
+            self.config.update(merged)
+        else:  # pragma: no cover - 正常不会走到
+            self.config = merged
+
+        self.settings = Settings.from_config(self.config)
+        if self.settings.inbound_token:
+            self.inbound_token = self.settings.inbound_token
+        elif not self.inbound_token:
+            self.inbound_token, _ = self.secret_store.ensure_token()
+
+        self.last_saved_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        await self._apply_runtime()
+        logger.info("%s: 设置已保存，通道已按新配置重建", PLUGIN_NAME)
+        return public_snapshot(self.config)
+
+    async def check_channels(self) -> dict[str, Any]:
+        """给 WebUI「测试连接」用的自检结果。"""
+        settings = self.settings
+
+        outbound: dict[str, Any] = {
+            "mode": settings.outbound_transport,
+            "ok": False,
+            "detail": "",
+        }
+        if self.transport is None:
+            if settings.outbound_transport == "mqtt":
+                outbound["detail"] = self.mqtt_error or "未配置 mqtt_host"
+            else:
+                outbound["detail"] = "未配置 ha_url / ha_token"
+        else:
+            ok, detail = await self.transport.ping()
+            outbound["ok"] = ok
+            outbound["detail"] = detail
+
+        mode = settings.inbound_transport
+        inbound: dict[str, Any] = {"mode": mode, "ok": False, "detail": ""}
+        if mode == "off":
+            inbound["detail"] = "已关闭"
+        elif mode == "mqtt":
+            connected = self._bridge is not None and self._bridge.is_connected()
+            inbound["ok"] = connected
+            inbound["detail"] = (
+                f"订阅 {settings.mqtt_notify_topic}"
+                if connected
+                else (self.mqtt_error or "MQTT 未连接")
+            )
+        elif self.inbound is not None and self.inbound.running:
+            inbound["ok"] = True
+            inbound["detail"] = f"监听 :{self.inbound.port}{self.inbound.path}"
+        else:
+            inbound["detail"] = self.inbound_error or "未启动"
+
+        return {
+            "outbound": outbound,
+            "inbound": inbound,
+            "notify_enabled": settings.notify_enabled,
+            "notify_umo": settings.notify_umo,
+        }
 
     # ------------------------------------------------------------------ 指令
 

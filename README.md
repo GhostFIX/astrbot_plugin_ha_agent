@@ -38,6 +38,15 @@ HA automation（温度 > 30°C）
 - HTTP 回传端口可自定义、令牌自动生成；MQTT 为纯出站连接，**Docker 不用映射端口**
 - 依赖只有 `aiohttp` + `paho-mqtt`
 
+## 两个入口
+
+| 入口 | 用途 |
+|---|---|
+| 插件详情页 → **设置**（本插件自己的可视化页） | 日常配置。切换 REST/MQTT 后**只显示相关字段**，保存即热生效 |
+| 插件卡片 → **配置**（AstrBot 原生配置页） | 全部 17 项平铺，备查、应急修改；UMO 字段可用会话选择器点选 |
+
+两边读写同一份配置，改哪边都生效。设置页保存后无需重载插件。
+
 ## 选哪种？
 
 | 你的情况 | 建议 |
@@ -338,21 +347,26 @@ pytest -q
 ```
 
 ```
-main.py            指令、帮助卡片、生命周期、传输选择
+main.py            指令、帮助卡片、生命周期、传输选择、设置热重建
 core/access.py     会话黑白名单
 core/config.py     配置归一化
+core/settings.py   设置页的快照脱敏、校验与合并
+core/web_api.py    设置页后端接口（register_web_api）
 core/store.py      回传令牌生成与持久化
 core/transport.py  Transport 协议 + RestTransport
 core/mqtt.py       MqttBridge（paho 适配）+ MqttTransport
 core/inbound.py    告警回传 HTTP 监听
-tests/             单测 + 冒烟（真实 HTTP 往返；MQTT 用假 paho 客户端）
+views/settings/    设置页（index.html + app.js + style.css）
+tests/             单测 + 冒烟 + 前后端契约（字段名/接口/版本号比对）
 ```
 
 `core/*` 不依赖 AstrBot，可以脱离框架单独测试；只有 `main.py` 依赖
 `astrbot.api.*`。
 
 **测试边界**：REST 方向用真实的本地 HTTP 服务往返；MQTT 方向用假 paho 客户端
-覆盖回调转接、主题路由、发布与错误分支，**没有对真实 Broker 做过联调**。
+覆盖回调转接、主题路由、发布与错误分支，**没有对真实 Broker 做过联调**；
+设置页的 HTML/JS 只做了静态契约校验（`tests/test_view_contract.py` 比对字段名、
+单选值、接口路径、版本号），**没有在真实浏览器里点过**。
 
 ## License
 

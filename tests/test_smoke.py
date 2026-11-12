@@ -12,6 +12,8 @@ import tempfile
 import types
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 BRIDGE_ROOT = ROOT.parent
 for _path in (BRIDGE_ROOT, ROOT):
@@ -33,9 +35,26 @@ def _install_stubs() -> None:
     api = _module("astrbot.api")
     event_mod = _module("astrbot.api.event")
     star_mod = _module("astrbot.api.star")
+    web_mod = _module("astrbot.api.web")
     core = _module("astrbot.core")
     utils = _module("astrbot.core.utils")
     path_mod = _module("astrbot.core.utils.astrbot_path")
+
+    class _Request:
+        query = type("Q", (), {"get": staticmethod(lambda *a, **k: "")})()
+
+        async def json(self, default=None, **kwargs):
+            return default if default is not None else {}
+
+    def json_response(data, status_code=200):
+        return {"status": status_code, "body": data}
+
+    def error_response(message, status_code=400):
+        return {"status": status_code, "body": {"success": False, "error": message}}
+
+    web_mod.request = _Request()
+    web_mod.json_response = json_response
+    web_mod.error_response = error_response
 
     class AstrMessageEvent:  # noqa: D401 - 仅用于类型标注
         pass
@@ -82,6 +101,7 @@ def _install_stubs() -> None:
     astrbot.core = core
     api.event = event_mod
     api.star = star_mod
+    api.web = web_mod
     core.utils = utils
     utils.astrbot_path = path_mod
 
@@ -431,3 +451,98 @@ def test_mqtt_without_host_reports_not_ready():
 
     assert plugin.transport is None
     assert "MQTT 未就绪" in results[0][1]
+
+
+# ------------------------------------------------------------ WebUI 设置接口
+
+
+class FakeConfig(dict):
+    """模拟 AstrBotConfig：dict + save_config。"""
+
+    def __init__(self, data: dict) -> None:
+        super().__init__(data)
+        self.saved: dict | None = None
+
+    def save_config(self, replace_config: dict | None = None) -> None:
+        if replace_config:
+            self.update(replace_config)
+        self.saved = dict(self)
+
+
+def test_web_api_registers_routes():
+    plugin, ctx, _ = _build()
+    routes = [entry[0] for entry in ctx.routes]
+
+    assert routes.count("/astrbot_plugin_ha_agent/settings") == 2
+    assert "/astrbot_plugin_ha_agent/settings/test" in routes
+
+
+def test_get_settings_endpoint_returns_masked_snapshot():
+    plugin, _, _ = _build()
+    result = asyncio.run(plugin.web_api.get_settings())
+
+    body = result["body"]
+    assert body["success"] is True
+    assert body["settings"]["outbound_transport"] == "rest"
+    assert body["settings"]["ha_token"] == ""
+    assert body["settings"]["ha_token_set"] is True
+    assert body["state"]["outbound_mode"] == "rest"
+
+
+def test_save_settings_endpoint_rejects_bad_value(monkeypatch):
+    import Github.core.web_api as web_api_mod
+
+    async def fake_body():
+        return {"outbound_transport": "carrier-pigeon"}
+
+    monkeypatch.setattr(web_api_mod, "_body", fake_body)
+    plugin, _, _ = _build()
+
+    result = asyncio.run(plugin.web_api.save_settings())
+
+    assert result["status"] == 400
+    assert result["body"]["success"] is False
+    assert "rest / mqtt" in result["body"]["error"]
+
+
+def test_save_settings_persists_and_hot_swaps_transport(monkeypatch):
+    import Github.main as main_mod
+
+    monkeypatch.setattr(main_mod, "MqttBridge", FakeBridge)
+
+    ctx = sys.modules["astrbot.api.star"].Context()
+    config = FakeConfig(dict(BASE_CONFIG))
+    plugin = HaAgentPlugin(ctx, config)
+    asyncio.run(plugin.initialize())
+
+    snapshot = asyncio.run(
+        plugin.save_settings({"outbound_transport": "mqtt", "mqtt_host": "10.0.0.9"})
+    )
+
+    assert plugin.settings.outbound_transport == "mqtt"
+    assert isinstance(plugin.transport, main_mod.MqttTransport)
+    assert config.saved is not None
+    assert config.saved["mqtt_host"] == "10.0.0.9"
+    assert snapshot["mqtt_host"] == "10.0.0.9"
+    assert snapshot["ha_token"] == ""
+    assert plugin.last_saved_at
+
+
+def test_save_settings_keeps_blank_secret():
+    ctx = sys.modules["astrbot.api.star"].Context()
+    config = FakeConfig({**BASE_CONFIG, "ha_token": "keep-me"})
+    plugin = HaAgentPlugin(ctx, config)
+
+    asyncio.run(plugin.save_settings({"ha_token": ""}))
+
+    assert config["ha_token"] == "keep-me"
+
+
+def test_check_channels_reports_both_directions():
+    plugin, _, _ = _build()
+    report = asyncio.run(plugin.check_channels())
+
+    assert report["outbound"]["mode"] == "rest"
+    assert report["outbound"]["ok"] is True
+    assert report["inbound"]["mode"] == "off"
+    assert report["inbound"]["detail"] == "已关闭"

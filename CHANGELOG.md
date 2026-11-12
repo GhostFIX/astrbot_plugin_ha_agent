@@ -1,5 +1,27 @@
 # CHANGELOG
 
+## 1.2.0 — 2026-11-12
+
+新增 WebUI 设置页：切换传输方式后只显示相关配置项。
+
+### 新增
+
+- `views/settings/`：Dashboard 插件视图
+  - 出站切换 `REST 事件` / `MQTT 发布`，只渲染对应字段
+  - 入站切换 `HTTP 端口` / `MQTT 订阅` / `关闭`，只渲染对应字段
+  - 主题前缀仅在任一方向使用 MQTT 时显示
+  - 「保存并生效」写回插件配置并热重建通道，无需重载插件
+  - 「测试连接」分别报出站与入站状态
+  - 密钥字段回显为空并标注「已设置，留空不修改」，避免误清空
+- `core/settings.py`：设置快照脱敏、提交校验与合并（纯函数）
+- `core/web_api.py`：`GET/POST /<插件>/settings`、`POST /<插件>/settings/test`
+- 主类新增 `save_settings()` / `check_channels()` / 运行时热重建
+
+### 变更
+
+- `_conf_schema.json` 保持 17 项平铺不变，作为完整选项备查页
+- 出站/入站通道的建立与销毁收敛到 `_apply_runtime()` / `_shutdown_runtime()`
+
 ## 1.1.0 — 2026-11-12
 
 新增 MQTT 双向通道，出站与入站传输方式各自独立可选。

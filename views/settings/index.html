@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HA 指令助手 · 设置</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="mark">HA</div>
+          <div>
+            <h1>HA 指令助手</h1>
+            <p>AstrBot ⇄ Home Assistant 文本通道</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <span class="chip" id="version">v1.2.0</span>
+          <span class="chip" id="chip-out">出站：—</span>
+          <span class="chip" id="chip-in">入站：—</span>
+        </div>
+      </header>
+
+      <p class="banner" id="banner" hidden></p>
+
+      <form id="form" autocomplete="off" novalidate>
+        <section class="card">
+          <h2>出站 · AstrBot → HA</h2>
+          <p class="sub">`/ha` 后面的文字从这里送到 Home Assistant。</p>
+
+          <div class="segmented" role="radiogroup" aria-label="出站方式">
+            <label>
+              <input type="radio" name="outbound_transport" value="rest" checked />
+              <span>REST 事件</span>
+            </label>
+            <label>
+              <input type="radio" name="outbound_transport" value="mqtt" />
+              <span>MQTT 发布</span>
+            </label>
+          </div>
+
+          <div class="fields" data-when="outbound:rest">
+            <label class="field">
+              <span>HA 地址</span>
+              <input name="ha_url" placeholder="http://192.168.1.5:8123" />
+              <em>结尾的 /api 会自动补齐</em>
+            </label>
+            <label class="field">
+              <span>长期访问令牌</span>
+              <input name="ha_token" type="password" placeholder="未设置" />
+              <em>个人资料 → 安全 → 长期访问令牌。留空表示不修改。</em>
+            </label>
+            <label class="field">
+              <span>事件类型</span>
+              <input name="event_type" placeholder="astrbot_command" />
+              <em>HA 自动化里监听这个事件名</em>
+            </label>
+            <label class="check">
+              <input type="checkbox" name="verify_ssl" />
+              <span>校验 HTTPS 证书（自签名证书才关闭）</span>
+            </label>
+          </div>
+
+          <div class="fields" data-when="outbound:mqtt">
+            <div class="grid2">
+              <label class="field">
+                <span>Broker 地址</span>
+                <input name="mqtt_host" placeholder="192.168.1.5" />
+                <em>同 Docker 网络可填容器名</em>
+              </label>
+              <label class="field">
+                <span>端口</span>
+                <input name="mqtt_port" type="number" min="1" max="65535" placeholder="1883" />
+                <em>TLS 一般用 8883</em>
+              </label>
+            </div>
+            <div class="grid2">
+              <label class="field">
+                <span>用户名</span>
+                <input name="mqtt_username" placeholder="可空" />
+              </label>
+              <label class="field">
+                <span>密码</span>
+                <input name="mqtt_password" type="password" placeholder="未设置" />
+                <em>留空表示不修改</em>
+              </label>
+            </div>
+            <label class="check">
+              <input type="checkbox" name="mqtt_tls" />
+              <span>使用 TLS（系统受信任证书）</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>入站 · HA → AstrBot</h2>
+          <p class="sub">HA 的告警/提示从这里回到聊天。</p>
+
+          <div class="segmented" role="radiogroup" aria-label="入站方式">
+            <label>
+              <input type="radio" name="inbound_transport" value="http" checked />
+              <span>HTTP 端口</span>
+            </label>
+            <label>
+              <input type="radio" name="inbound_transport" value="mqtt" />
+              <span>MQTT 订阅</span>
+            </label>
+            <label>
+              <input type="radio" name="inbound_transport" value="off" />
+              <span>关闭</span>
+            </label>
+          </div>
+
+          <div class="fields" data-when="inbound:http">
+            <div class="grid2">
+              <label class="field">
+                <span>监听端口</span>
+                <input
+                  name="inbound_port"
+                  type="number"
+                  min="1024"
+                  max="65535"
+                  placeholder="6199"
+                />
+                <em>容器内端口；Docker 需把宿主端口映射到它</em>
+              </label>
+              <label class="field">
+                <span>回传令牌</span>
+                <input name="inbound_token" type="password" placeholder="未设置" />
+                <em>留空则沿用已生成的令牌</em>
+              </label>
+            </div>
+          </div>
+
+          <div class="fields" data-when="inbound:mqtt">
+            <p class="note">
+              复用出站的 MQTT 连接，订阅下面「共用」里的主题前缀 + <code>/notify</code>。
+              没有 HTTP 状态码，投递失败只写 AstrBot 日志。
+            </p>
+          </div>
+
+          <div class="fields" data-when="inbound:off">
+            <p class="note">不会接收任何告警。HA 侧的推送会被丢弃。</p>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>共用</h2>
+
+          <div class="fields" data-when="any:mqtt">
+            <label class="field">
+              <span>MQTT 主题前缀</span>
+              <input name="mqtt_topic_prefix" placeholder="astrbot/ha" />
+              <em>指令发 &lt;前缀&gt;/command，告警收 &lt;前缀&gt;/notify</em>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>告警推送目标会话</span>
+            <input name="notify_umo" placeholder="留空 = 不接收告警" />
+            <em>在目标会话里发一条 <code>/ha</code>，帮助卡片会显示 UMO，复制粘贴即可</em>
+          </label>
+
+          <div class="grid2">
+            <label class="field">
+              <span>指令白名单</span>
+              <textarea name="allowed_umos" rows="3" placeholder="每行一个 UMO，留空 = 不限制"></textarea>
+            </label>
+            <label class="field">
+              <span>指令黑名单</span>
+              <textarea name="blocked_umos" rows="3" placeholder="每行一个 UMO，优先级高于白名单"></textarea>
+            </label>
+          </div>
+        </section>
+
+        <div class="actions">
+          <button type="submit" class="primary" id="save">保存并生效</button>
+          <button type="button" id="test">测试连接</button>
+          <span class="status" id="status"></span>
+        </div>
+      </form>
+
+      <section class="report" id="report" hidden></section>
+
+      <footer class="foot">
+        这里的改动会写回插件配置，「插件 → HA 指令助手 → 配置」页仍保留全部选项备查。
+      </footer>
+    </div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
