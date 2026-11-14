@@ -474,25 +474,44 @@ class HaAgentPlugin(Star):
             return DeliveryReport(False, "deliver_failed", 0, len(targets))
 
         delivered = 0
+        failures: list[str] = []
+        raised = False
+        invalid = False
+
         for target in targets:
             try:
                 ok = bool(await self.context.send_message(target, chain))
             except ValueError:
                 # UMO 字符串不合法，通常是手抄时少了平台前缀。
+                invalid = True
+                failures.append(f"{target}: UMO 不合法")
                 logger.warning("%s: 告警目标格式不合法 %r", PLUGIN_NAME, target)
-                ok = False
-            except Exception:  # noqa: BLE001
+                continue
+            except Exception as exc:  # noqa: BLE001
+                # 平台适配器内部失败（掉线、风控、窗口过期……），原文最有诊断价值。
+                raised = True
+                failures.append(f"{target}: {type(exc).__name__}: {exc}")
                 logger.exception("%s: 向 %s 发送失败", PLUGIN_NAME, target)
-                ok = False
+                continue
 
             if ok:
                 delivered += 1
                 self.umo_history.remember(target)
             else:
+                failures.append(f"{target}: 平台未确认送达")
                 logger.warning("%s: 告警目标 %s 未送达到", PLUGIN_NAME, target)
 
         if delivered == 0:
-            return DeliveryReport(False, "platform_not_found", 0, len(targets))
+            if raised:
+                error = "send_failed"
+            elif invalid:
+                error = "invalid_umo"
+            else:
+                error = "platform_not_found"
+            if failures:
+                self.logs.record("WARNING", "告警投递失败：" + "；".join(failures)[:500])
+            return DeliveryReport(False, error, 0, len(targets), tuple(failures))
+
         if delivered < len(targets):
             logger.warning(
                 "%s: 告警部分送达 %s/%s", PLUGIN_NAME, delivered, len(targets)
@@ -503,11 +522,13 @@ class HaAgentPlugin(Star):
         """MQTT 入站：没有 HTTP 状态码，失败只写日志。"""
         report = await self._deliver(title, message)
         if not report.ok:
+            reason = report.failures[0] if report.failures else "未知原因"
             logger.warning(
-                "%s: MQTT 告警未投递（%s）：%s",
+                "%s: MQTT 告警未投递（%s）：%s | %s",
                 PLUGIN_NAME,
                 report.error,
                 message[:120],
+                reason,
             )
         elif report.delivered < report.total:
             logger.warning(

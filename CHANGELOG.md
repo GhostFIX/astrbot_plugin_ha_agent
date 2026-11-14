@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 1.2.7 — 2026-11-14
+
+### 修复
+
+- 告警投递的错误分类不再"一刀切"：以前任何异常都记成 `platform_not_found`
+  （会被误读为 UMO 写错），现在区分
+  - `invalid_umo`：`send_message` 抛 `ValueError`，UMO 字符串不合法（400）
+  - `send_failed`：平台适配器内部抛异常，例如微信掉线/风控（502）
+  - `platform_not_found`：没有平台实例匹配该 UMO（502）
+- 失败原因会带上适配器原文：HTTP 响应新增 `reason` 字段，MQTT 写进日志
+- 多目标投递把每个目标的失败原因汇总后写一条 WARNING 到日志页
+
 ## 1.2.6 — 2026-11-12
 
 ### 新增

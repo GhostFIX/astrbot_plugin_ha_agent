@@ -309,7 +309,12 @@ Content-Type: application/json
 | 令牌错误/缺失 | 401 | `{"ok": false, "error": "invalid_token"}` |
 | 未配置告警目标 | 409 | `{"ok": false, "error": "notify_umo_not_configured"}` |
 | 消息为空 | 400 | `{"ok": false, "error": "empty_message"}` |
-| 目标平台不在线 | 502 | `{"ok": false, "error": "platform_not_found"}` |
+| UMO 格式不合法 | 400 | `{"ok": false, "error": "invalid_umo", "reason": "..."}` |
+| 没有平台实例匹配该 UMO | 502 | `{"ok": false, "error": "platform_not_found"}` |
+| 平台适配器发送失败 | 502 | `{"ok": false, "error": "send_failed", "reason": "RuntimeError: ..."}` |
+
+失败响应里的 `reason` 是第一个失败目标的原文原因，方便直接在 HA 的
+`rest_command` 日志里定位（MQTT 没有响应，原因写进 AstrBot 日志）。
 
 ### MQTT
 
@@ -340,7 +345,8 @@ Content-Type: application/json
 | `✅ 已发送` 但 HA 没动 | 事件名/主题不同、自动化没启用、条件写错 | 开发者工具→事件监听，或 MQTTX 订阅对应主题对比内容 |
 | HA 报 401 | 两边令牌不一致 | 页面重新生成令牌后同步更新 `secrets.yaml` |
 | HA 报 409 | 没配告警目标 | 填 `notify_umos` |
-| HA 报 502 | 目标平台掉线或 UMO 写错 | 发 `/ha check` 看 SID |
+| HA 报 502 | 目标平台掉线或 UMO 写错 | 看响应里的 `reason`；`send_failed` 是平台适配器报错（如微信风控/掉线），`platform_not_found` 才是 UMO 不匹配 |
+| 告警日志出现 `send_failed` | 平台适配器自身失败 | 用同一 UMO 在 AstrBot 里手动发一条对比；个人微信常见原因是掉线、需要近期互动、触发风控 |
 | 接口成功但群里没消息 | 平台不支持主动消息（如 QQ 官方接口） | 换 OneBot / Telegram 等平台 |
 | 插件详情页仍只看到旧版「日志」入口 / 入口重复 | 安装目录里残留 `views/logs`（1.2.x 早期版本） | 删掉该目录后重载插件；版本应为 1.2.2，且 `views/` 下只有 `settings` |
 | 帮助卡片显示端口绑定失败 | 端口被占用 | 改 `inbound_port` 并同步改 HA 侧 URL |

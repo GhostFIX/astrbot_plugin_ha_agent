@@ -29,6 +29,7 @@ class DeliveryReport:
     error: str | None = None
     delivered: int = 0
     total: int = 0
+    failures: tuple[str, ...] = ()
 
 
 Deliver = Callable[[str, str], Awaitable[DeliveryReport]]
@@ -36,6 +37,8 @@ Deliver = Callable[[str, str], Awaitable[DeliveryReport]]
 _ERROR_STATUS = {
     "notify_umo_not_configured": 409,
     "platform_not_found": 502,
+    "send_failed": 502,
+    "invalid_umo": 400,
     "empty_message": 400,
     "deliver_failed": 500,
 }
@@ -150,15 +153,16 @@ class InboundServer:
                 status=200,
             )
         code = report.error or "deliver_failed"
-        return self._json(
-            {
-                "ok": False,
-                "error": code,
-                "sent": report.delivered,
-                "targets": report.total,
-            },
-            status=_ERROR_STATUS.get(code, 500),
-        )
+        payload: dict[str, object] = {
+            "ok": False,
+            "error": code,
+            "sent": report.delivered,
+            "targets": report.total,
+        }
+        if report.failures:
+            # 把适配器给出的原因透出去，HA 的 rest_command 日志里就能直接看到。
+            payload["reason"] = report.failures[0][:300]
+        return self._json(payload, status=_ERROR_STATUS.get(code, 500))
 
     async def start(self) -> int:
         """启动监听，返回实际端口（传 0 时由系统分配）。"""

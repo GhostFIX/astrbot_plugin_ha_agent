@@ -206,6 +206,33 @@ def test_set_token_takes_effect_immediately():
     assert received == ["new"]
 
 
+def test_send_failed_returns_502_with_reason():
+    async def deliver(title: str, message: str):
+        return DeliveryReport(
+            False,
+            "send_failed",
+            0,
+            1,
+            ("weixin:friend:abc: RuntimeError: failed to send 1 message segment(s)",),
+        )
+
+    status, body = _request(deliver, payload={"message": "hi"}, headers=AUTH)
+
+    assert status == 502
+    assert body["error"] == "send_failed"
+    assert "RuntimeError" in body["reason"]
+
+
+def test_invalid_umo_returns_400():
+    async def deliver(title: str, message: str):
+        return DeliveryReport(False, "invalid_umo", 0, 1, ("bad: UMO 不合法",))
+
+    status, body = _request(deliver, payload={"message": "hi"}, headers=AUTH)
+
+    assert status == 400
+    assert body["error"] == "invalid_umo"
+
+
 def test_platform_not_found_returns_502():
     async def deliver(title: str, message: str):
         return DeliveryReport(False, "platform_not_found")

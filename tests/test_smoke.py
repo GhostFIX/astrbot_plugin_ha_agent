@@ -645,6 +645,37 @@ def test_check_channels_reports_both_directions():
 # ---------------------------------------------------------------- 多目标投递
 
 
+def test_deliver_reports_adapter_failure_with_reason():
+    plugin, _, _ = _build({"notify_umos": ["weixin:friend:abc"]})
+
+    class ExplodingContext:
+        async def send_message(self, session, chain):
+            raise RuntimeError("failed to send 1 message segment(s)")
+
+    plugin.context = ExplodingContext()
+    report = asyncio.run(plugin._deliver("", "今日耗电：2.45 kWh"))
+
+    assert report.ok is False
+    assert report.error == "send_failed"
+    assert "RuntimeError" in report.failures[0]
+    assert "failed to send" in report.failures[0]
+
+
+def test_deliver_reports_invalid_umo():
+    plugin, _, _ = _build({"notify_umos": ["bad"]})
+
+    class BadSessionContext:
+        async def send_message(self, session, chain):
+            raise ValueError("不合法的 session 字符串")
+
+    plugin.context = BadSessionContext()
+    report = asyncio.run(plugin._deliver("", "hi"))
+
+    assert report.ok is False
+    assert report.error == "invalid_umo"
+    assert "UMO 不合法" in report.failures[0]
+
+
 def test_deliver_multi_target_partial_failure():
     plugin, _, _ = _build({"notify_umos": ["good:1", "bad:2"]})
 
